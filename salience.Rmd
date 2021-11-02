@@ -4,27 +4,120 @@ author: "Lærke Brædder"
 date: "11/2/2021"
 output: html_document
 ---
+## Analysis of sub-experiment 1, salience. We want to analyze the time it takes for the image to emerge (rt) as a function of the three compositional dimensions: Blank space (b), noise (n), and complexity (c).
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+## Loading data and libraries
+```{r}
+pacman::p_load(tidyverse,
+               lmerTest,
+               brms,
+               fitdistrplus, # xxx Double check if you actually need these last three. What do they do?
+               ggbeeswarm,
+               svglite)
+
+# Loading the logfiles and binding them into one big data frame:
+filePaths1 <- list.files("data/logfiles-salience/", "\\.csv$", full.names = TRUE)
+dfs <- do.call(rbind, lapply(filePaths1, read.csv))
+
+# Cleaning the data up a little:
+dfs <- dfs %>% rename(RT = Reaction_time) #Renaming the reaction time variable to RT
+dfs <- subset(dfs, RT > 0.2) # Removing impossibly fast rt's.
+dfs$Correct <- as.factor(dfs$Correctness) #Creating a new column for correctness where it is a factor. The factor column is named 'Correct'
+dfs <- subset(dfs,!is.na(Correct)) #Removing incorrect responses from the df. xxx what is actually happening here?
+dfs$ID <- as.factor(dfs$ID)
+#d <- subset(d,ID!=66) # Excluding participant with all extremely low RTs. Lærke: here they exclude participant 66 due to extremely low rt's, I will have to look through my data to see in this is necessary. I will, however, have to exclude participant 014 and 017 due to them having their boxes completely merged on the screen:
+dfs <- subset(dfs, ID != 014)
+dfs <- subset(dfs, ID != 017)
+# xxx I am not sure is setting these as factors is correct, but I am doint it:
+dfs$Complexity <- as.factor(dfs$Complexity)
+dfs$Noise <- as.factor(dfs$Noise)
+dfs$BlankSpace <- as.factor(dfs$BlankSpace)
+
+# xxx I am not sure what this, from the original script, does:
+## d$PeriodL <- d$PeriodL - 2
+## dC <- subset(d,Correct==1)
+## dC$RT1 <- dC$RT/max(dC$RT)
+
+
+# xxx Not sure exactly what this does either:
+CHAINS = 2
+ITER = 8e3
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.999
+  )
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Exploratory visualization (xxx obs: this is pretty much an exact replica of the 2020 script)
+```{r Exploratory Visualization}
+# Okay, the reason why I don't need a Type column in because I only have the idealized stim in this dataset. I do not have any trials with original engravings as stim.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+# Double-checking the RTs
+ggplot(dfs, aes(RT)) + 
+  geom_density(aes(fill = Correct, group = Correct, color = Correct), alpha = 0.3) +
+  NULL
+# original: It looks like a nice gamma, but there is a 0 second mode in correct = 0 (Lærke: I don't think there is in mine, but I will have to check what it looks like in theirs). xxx Lærke: Why is there a correct=0? didn't I remove those?
 
-```{r cars}
-summary(cars)
+
+## By participant
+ggplot(dfs, aes(RT)) + 
+  geom_density(aes(fill = ID, group = ID, color = ID), alpha = 0.3) +
+  guides(fill = FALSE, group = FALSE, color = FALSE) +
+  NULL
+
+### Distribution analysis by participant
+C1 = subset(dfs, Correctness == 1)
+for (i in unique(dfs$ID)){
+  x = C1$RT[C1$ID == i]
+  fn <- fitdist(x, "norm")
+  Normal = summary(fn)$aic
+  fln <- fitdist(x, "lnorm")
+  LogNormal = summary(fln)$aic
+  fg <- fitdist(x, "gamma")
+  Gamma=summary(fg)$aic
+  x<- data.frame(ID = i, Normal, LogNormal, Gamma)
+  if (exists("FitData")){FitData = rbind(FitData, x)}else{FitData=x}
+}
+
+C1 <- FitData %>% gather(Distribution, Fit, Normal:Gamma, na.rm = FALSE, convert = FALSE)
+
+ggplot(C1, aes(Distribution, Fit)) +
+  geom_violin() +
+  geom_beeswarm(aes(color = Distribution))
+
+# Original: Definitely not normal, not super persuasive difference between lognormal and gamma
+# Original: Conceptual reflection says gamma
+# xxx Lærke: Look at their data to compare
+
+## Let's explore accuracy and rt by the compositional dimensions
+# Complexity:
+ggplot(dfs, aes(Correct)) +
+  geom_bar(stat = "count") + facet_wrap(.~ Complexity)
+
+ggplot(subset(dfs, Correct == 1), aes(Complexity, RT)) +
+  geom_violin() +
+  geom_beeswarm(aes(color = Complexity))
+
+# Noise:
+ggplot(dfs, aes(Correct)) +
+  geom_bar(stat="count") + facet_wrap(.~ Noise)
+
+ggplot(subset(dfs,Correct==1),aes(Noise, RT)) +
+  geom_violin() +
+  geom_beeswarm(aes(color = Noise))
+
+# Blank space:
+ggplot(dfs, aes(Correct)) +
+  geom_bar(stat="count") + facet_wrap(.~ BlankSpace)
+
+ggplot(subset(dfs,Correct==1),aes(BlankSpace, RT)) +
+  geom_violin() +
+  geom_beeswarm(aes(color=BlankSpace))
+
+# xxx these are the same whether or not I filter out incorrect answers. But why are we looking at then if I filtered them out? didn't I?
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## 
