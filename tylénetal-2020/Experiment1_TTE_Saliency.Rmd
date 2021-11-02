@@ -1,0 +1,403 @@
+---
+title: "Experiment1_TTE_Saliency"
+author: "RF"
+date: "8/15/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Analyzing Experiment 1 - Time to Emerge is a function of period
+
+### Load data and libraries
+
+```{r Data and Libraries}
+
+pacman::p_load(tidyverse,lmerTest,brms,fitdistrplus,ggbeeswarm,svglite)
+
+d <- read_csv("Data/Exp1_TTE.csv")
+d <- d %>% rename(RT = Reaction_time,Site = TargetSite)
+d <- subset(d, RT > 0.2)
+d$Correct <- as.factor(d$Correctness)
+d <- subset(d,!is.na(Correct))
+d$ID <- as.factor(d$ID)
+d <- subset(d,ID!=66) # Excluding participant with all extremely low RTs 
+d$PeriodL <- d$PeriodL - 2
+dC <- subset(d,Correct==1)
+dC$RT1 <- dC$RT/max(dC$RT)
+
+
+CHAINS = 2
+ITER = 8e3
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.999
+  )
+```
+
+## Exploratory visualization
+
+```{r Exploratory Visualization}
+# Double-checking the RTs
+ggplot(d,aes(Reaction_time)) + 
+  geom_density(aes(fill=Correct,group=Correct,color=Correct),alpha=0.3) +
+  facet_wrap(Type~Correct) +
+  NULL
+
+# It looks like a nice gamma, but there is a 0 second mode in correct = 0
+
+## By participant
+ggplot(d,aes(Reaction_time)) + 
+  geom_density(aes(fill=ID,group=ID,color=ID),alpha=0.3) +
+  facet_wrap(Type~Correct) +
+  guides(fill=FALSE,group=FALSE,color=FALSE) +
+  NULL
+
+### Distribution analysis by participant
+C1=subset(d,Correctness==1)
+for (i in unique(d$ID)){
+  x=C1$Reaction_time[C1$ID==i]
+  fn <- fitdist(x, "norm")
+  Normal=summary(fn)$aic
+  fln <- fitdist(x, "lnorm")
+  LogNormal=summary(fln)$aic
+  fg <- fitdist(x, "gamma")
+  Gamma=summary(fg)$aic
+  x<- data.frame(ID=i,Normal,LogNormal,Gamma)
+  if (exists("FitData")){FitData=rbind(FitData,x)}else{FitData=x}
+}
+
+C1 <- FitData %>% gather(Distribution, Fit, Normal:Gamma, na.rm = FALSE, convert = FALSE)
+
+ggplot(C1,aes(Distribution,Fit)) +
+  geom_violin() +
+  geom_beeswarm(aes(color=Distribution))
+
+# Definitely not normal, not super persuasive difference between lognormal and gamma
+# Conceptual reflection says gamma
+
+## Let's explore accuracy and rt by period
+
+ggplot(d, aes(Correct)) +
+  geom_bar(stat="count") + facet_wrap(.~Period)
+
+ggplot(subset(d,Correct==1),aes(PeriodL,Reaction_time)) +
+  geom_violin() +
+  geom_beeswarm(aes(color=Period))
+
+```
+
+## Analysis proper
+
+### Is accuracy affected by period? Signal Detection Theory model of accuracy
+
+```{r}
+
+AccuracySDT_f1 <- bf(Response ~ 1 + Correct_response * PeriodL + (1 + Correct_response * PeriodL | ID) + (1+ Correct_response | Drawing))
+AccuracySDT_f2 <- bf(Response ~ 1 + Correct_response * (PeriodL + I(PeriodL)^2) + (1 + Correct_response * (PeriodL + I(PeriodL)^2) | ID) + (1+ Correct_response | Drawing))
+
+AccuracySDT_prior <- c(
+           prior(normal(0,1), class = Intercept),
+           prior(normal(0,1), class = b),
+           prior(normal(0,1), class = sd),
+           prior(lkj(5),      class=cor))
+
+AccuracySDT_m1 <- brm(AccuracySDT_f1,
+                   family=bernoulli(link="probit"),
+                   data=subset(d,Type=="Stimuli"),
+                   prior=AccuracySDT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+AccuracySDT_m1 <- add_ic(AccuracySDT_m1,ic="LOO",cores=CHAINS)
+
+AccuracySDT_m2 <- brm(AccuracySDT_f2,
+                   family=bernoulli(link="probit"),
+                   data=subset(d,Type=="Stimuli"),
+                   prior=AccuracySDT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+AccuracySDT_m2 <- add_ic(AccuracySDT_m2,ic="LOO",cores=CHAINS)
+
+
+save(AccuracySDT_m1,AccuracySDT_m2, file="Models/Exp1_AccuracySDT_Models")
+
+# Model comparison
+print(compare_ic(AccuracySDT_m1,AccuracySDT_m2,ic="loo"))
+
+# Summarizing and visualizing results
+print(summary(AccuracySDT_m1))
+print(marginal_effects(AccuracySDT_m1))
+print(hypothesis(AccuracySDT_m1, "Correct_responseright:PeriodL>0"))
+
+```
+
+### Is RT affected by period?
+
+```{r}
+# Models conditioning rate only
+RT_f1 <- bf(RT ~ 1 + PeriodL + (1 + PeriodL | ID) + (1|Drawing))
+RT_f2 <- bf(RT ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL  + I(PeriodL)^2 |i| ID) + (1|Drawing))
+
+# Models conditioning rate and shape
+RT_f1a <- bf(RT ~ 1 + PeriodL + (1 + PeriodL | p | ID) + (1|Drawing),
+             shape ~ 1 + PeriodL + (1 + PeriodL | p | ID))
+RT_f2a <- bf(RT ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL  + I(PeriodL)^2  | p | ID) + (1|Drawing),
+             shape ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL + I(PeriodL)^2 | p | ID))
+
+RT_prior <- c(
+           prior(normal(0, .3), class = Intercept),
+           prior(normal(0, .1), class = b),
+           prior(normal(0, .3), class = sd),
+           prior(lkj(5),      class=cor))
+
+RT_m1 <- brm(RT_f1,
+                   family=Gamma(link="log"),
+                   data=subset(dC,Type=="Stimuli"),
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+RT_m1 <- add_ic(RT_m1,ic="loo",cores=CHAINS)
+
+RT_m1a <- brm(RT_f1a,
+                   family=Gamma(link="log"),
+                   data=subset(dC,Type=="Stimuli"),
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+RT_m1a <- add_ic(RT_m1a,ic="loo",cores=CHAINS)
+
+RT_m2 <- brm(RT_f2,
+                   family=Gamma(link="log"),
+                   data=subset(dC,Type=="Stimuli"),
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+RT_m2 <- add_ic(RT_m2,ic="loo",cores=CHAINS)
+
+RT_m2a <- brm(RT_f2a,
+                   family=Gamma(link="log"),
+                   data=subset(dC,Type=="Stimuli"),
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER, refresh=10,
+                   control = CONTROLS)
+RT_m2a <- add_ic(RT_m2a,ic="loo",cores=CHAINS)
+
+
+save(RT_m1,RT_m1a,RT_m2,RT_m2a,file="Models/Exp1_RT_Models")
+
+# Model comparison
+print(compare_ic(RT_m1,RT_m1a,RT_m2,ic="loo"))
+# Summarizing and visualizing results
+print(summary(RT_m1a))
+print(marginal_effects(RT_m1a))
+print(hypothesis(RT_m1a, "PeriodL<0"))
+```
+
+### Plots of the RT findings
+
+```{r}
+## Plot for the main manuscript - Figure N
+dC_agg<-dC %>% group_by(ID, PeriodL,Type) %>% dplyr::summarize(
+  mRT = mean(RT,na.rm=T),
+  sdRT = sd(RT,na.rm=T),
+  mRT_log = mean(log(RT),na.rm=T),
+  sdRT_log = sd(log(RT),na.rm=T))
+
+Exp1_MainPlot <- ggplot(subset(dC_agg, Type=="Stimuli" & mRT_log>0),aes(PeriodL,mRT)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Period") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
+  NULL
+ggsave("Plots/Exp1_MainPlot.svg", plot = Exp1_MainPlot)
+
+
+## Plot for the supplementary materials
+ggplot(subset(dC, Type=="Stimuli"),aes(PeriodL,RT)) + 
+  geom_beeswarm(aes(color=Site),alpha=0.3) + 
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Period") +
+  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
+  NULL
+
+ggsave("Plots/Exp1_RT_Stimuli.svg", width = 10)
+```
+
+
+### Control analysis for Type. Do originals show different effects? SDT and Gamma analyses
+
+```{r}
+AccuracySDT_Type_f0 <- bf(Response ~ 1 + Correct_response * PeriodL + Type + (1 + Correct_response * PeriodL + Type | ID) + (1+ Correct_response | Drawing))
+AccuracySDT_Type_f1 <- bf(Response ~ 1 + Correct_response * PeriodL * Type + (1 + Correct_response * PeriodL * Type | ID) + (1+ Correct_response | Drawing))
+
+AccuracySDT_Type_m0 <- brm(AccuracySDT_Type_f0,
+                   family=bernoulli(link=probit),
+                   data=d,
+                   prior=AccuracySDT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+AccuracySDT_Type_m0 <- add_ic(AccuracySDT_Type_m0,ic="LOO",cores=CHAINS)
+
+AccuracySDT_Type_m1 <- brm(AccuracySDT_Type_f1,
+                   family=bernoulli(link=probit),
+                   data=d,
+                   prior=AccuracySDT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+AccuracySDT_Type_m1 <- add_ic(AccuracySDT_Type_m1,ic="LOO",cores=CHAINS)
+
+# Model comparison
+print(compare_ic(AccuracySDT_m1,AccuracySDT_Type_m0,AccuracySDT_Type_m1,ic="loo"))
+save(AccuracySDT_Type_m0,AccuracySDT_Type_m1, file="Models/Exp1_Accuracy_Type")
+
+# RT control analysis
+RT_Type_f0 <- bf(RT ~ 1 + PeriodL + Type + (1 + PeriodL + Type | p | ID) + (1|Drawing),
+             shape ~ 1 + PeriodL + Type + (1 + PeriodL + Type | p | ID))
+
+RT_Type_f1 <- bf(RT ~ 1 + PeriodL * Type + (1 + PeriodL + Type | p | ID) + (1|Drawing),
+             shape ~ 1 + PeriodL * Type + (1 + PeriodL * Type | p | ID))
+
+RT_Type_m0 <- brm(RT_Type_f0,
+                   family=Gamma(link="log"),
+                   data=dC,
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+RT_Type_m0 <- add_ic(RT_Type_m0,ic="LOO",cores=CHAINS)
+save(RT_Type_m0, file="Models/Exp1_RT_Type")
+
+RT_Type_m1 <- brm(RT_Type_f1,
+                   family=Gamma(link="log"),
+                   data=dC,
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+RT_Type_m1 <- add_ic(RT_Type_m1,ic="LOO",cores=CHAINS)
+save(RT_Type_m0,RT_Type_m1, file="Models/Exp1_RT_Type")
+
+# Model comparison
+print(compare_ic(RT_Type_m0,RT_Type_m1,ic="loo"))
+
+# Visualizing differences in RT due to rate and shape differences between types
+
+x1 <- rgamma(100000, shape = 2.03, rate = 0.66)
+x2 <- rgamma(100000, shape = 2.03-0.29, rate = 0.66+0.04)
+
+den1 <- density(x1)
+den2 <- density(x2)
+
+dat1 <- data.frame(x = den1$x, y = den1$y, Type="Originals")
+dat2 <- data.frame(x = den2$x, y = den2$y, Type="Stimuli")
+dat <- rbind(dat1,dat2)
+
+# Plot density as points
+ggplot(data = dat, aes(x = x, y = y, color=Type)) + 
+  geom_point(size = 3) +
+  theme_classic()
+
+ggsave("Plots/Exp1_RT_TypeCheck.svg", width = 10)
+```
+
+
+## Control analysis for Site. Do different sites show different effects?
+```{r}
+
+dC <- dC %>% rename(Site=TargetSite) 
+AccuracySDT_Site_f0 <- bf(Response ~ 1 + Correct_response * PeriodL + Site + (1 + Correct_response * PeriodL + Site | ID) + (1|Drawing))
+AccuracySDT_Site_f1 <- bf(Response ~ 1 + Correct_response * PeriodL * Site + (1 + Correct_response * PeriodL * Site | ID) + (1|Drawing))
+
+AccuracySDT_Site_m0 <- brm(AccuracySDT_Site_f0,
+                   family=bernoulli(link=probit),
+                   data=subset(d,Type=="Stimuli"),
+                   prior=AccuracySDT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+AccuracySDT_Site_m0 <- add_ic(AccuracySDT_Site_m0,ic="LOO",cores=CHAINS)
+
+AccuracySDT_Site_m1 <- brm(AccuracySDT_Site_f1,
+                   family=bernoulli(link=probit),
+                   data=subset(d,Type=="Stimuli"),
+                   prior=AccuracySDT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+AccuracySDT_Site_m1 <- add_ic(AccuracySDT_Site_m1,ic="LOO",cores=CHAINS)
+
+# Model comparison
+compare_ic(AccuracySDT_Site_m0,AccuracySDT_Site_m1,ic="loo")
+save(AccuracySDT_Site_m0,AccuracySDT_Site_m1, file="Models/Exp1_Accuracy_Site")
+
+# Summarizing and visualizing results
+
+# RT control analysis
+
+RT_Site_f0 <- bf(RT ~ 1 + PeriodL + Site + (1 + PeriodL + Site | p | ID) + (1|Drawing),
+             shape ~ 1 + PeriodL + Site + (1 + PeriodL + Site | p | ID))
+
+RT_Site_f1 <- bf(RT ~ 1 + PeriodL * Site + (1 + PeriodL * Site | p | ID) + (1|Drawing),
+             shape ~ 1 + PeriodL * Site + (1 + PeriodL * Site | p | ID))
+
+RT_Site_m0 <- brm(RT_Site_f0,
+                   family=Gamma(link="log"),
+                   data=subset(dC,Type=="Stimuli"),
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+RT_Site_m0 <- add_ic(RT_Site_m0,ic="LOO",cores=CHAINS)
+save(RT_Site_m0,file="Models/Exp1_RT_Site")
+
+RT_Site_m1 <- brm(RT_Site_f1,
+                   family=Gamma(link="log"),
+                   data=subset(dC,Type=="Stimuli"),
+                   prior=RT_prior,
+                   sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS)
+RT_Site_m1 <- add_ic(RT_Site_m1,ic="LOO",cores=CHAINS)
+save(RT_Site_m0,RT_Site_m1, file="Models/Exp1_RT_Site")
+
+# Model comparison
+print(compare_ic(RT_m1a,RT_Site_m0,RT_Site_m1,ic="loo"))
+
+# Summarizing and visualizing results
+print(summary(RT_Site_m1))
+print(hypothesis(RT_Site_m1,"SiteDiepkloof<0"))
+print(hypothesis(RT_Site_m1,"shape_SiteDiepkloof<0"))
+print(hypothesis(RT_Site_m1,"PeriodL:SiteDiepkloof<0"))
+print(hypothesis(RT_Site_m1,"shape_PeriodL:SiteDiepkloof<0"))
+```
+

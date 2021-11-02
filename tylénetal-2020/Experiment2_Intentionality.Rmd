@@ -1,0 +1,202 @@
+---
+title: "Experiment2_Intentionality"
+author: "RF"
+date: "8/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Experiment 2 - Intentionality
+
+### Load data and libraries
+
+```{r Load data and libraries}
+pacman::p_load(tidyverse,brms,rstan,loo)
+
+d <- read_csv("Data/Exp2_IntentionalityAll.csv")
+
+d$PeriodR <- "Old"
+d$PeriodR[grepl("Medium",d$DrawingR)] <- "Medium"
+d$PeriodR[grepl("Recent",d$DrawingR)] <- "Recent"
+d$PeriodL <- "Old"
+d$PeriodL[grepl("Medium",d$DrawingL)] <- "Medium"
+d$PeriodL[grepl("Recent",d$DrawingL)] <- "Recent"
+d$PeriodRo <- factor(d$PeriodR, ordered = TRUE, 
+                             levels = c("Old", "Medium", "Recent"))
+d$PeriodLo <- factor(d$PeriodL, ordered = TRUE, 
+                             levels = c("Old", "Medium", "Recent"))
+d$PeriodR <- as.numeric(d$PeriodRo)-2
+d$PeriodL <- as.numeric(d$PeriodLo)-2
+
+d$SiteR <- 0 # Blombos
+d$SiteR[grepl("1",d$DrawingR)] <- 1 # Diepkloof
+d$SiteR[grepl("2",d$DrawingR)] <- 1 # Diepkloof
+d$SiteL <- 0 # Blombos
+d$SiteL[grepl("1",d$DrawingL)] <- 1 # Diepkloof
+d$SiteL[grepl("2",d$DrawingL)] <- 1 # Diepkloof
+
+x <- as.factor(as.character(c(d$DrawingR,d$DrawingL)))
+d$DrawingR <- x[seq(nrow(d))]
+d$DrawingL <- x[(nrow(d)+1):length(x)]
+
+dS <- subset(d,Type=="Stimuli")
+
+x <- as.factor(as.character(c(dS$DrawingR,dS$DrawingL)))
+dS$DrawingR <- x[seq(nrow(dS))]
+dS$DrawingL <- x[(nrow(dS)+1):length(x)]
+
+PeriodItem <- c(2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3) - 2
+PeriodItemS <- PeriodItem[c(2:3,5:6,8:9,11:12,14:15,17:18,20:21,23:24,26:27,29:30,32:33,35:36)]
+SiteItem <- c(1,1,1,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0)
+SiteItemS <- c(1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0)
+TypeItem <- c(1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0)
+
+
+CHAINS = 2
+ITER = 8e3
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.999
+  )
+```
+
+## Analysis 1: Outcome contest model
+
+```{r}
+d1 <- list(
+  N_choices = nrow(dS),
+  N_items = length(unique(c(dS$DrawingL,dS$DrawingR))),
+  N_raters = length(unique(dS$ID)),
+  y = dS$ResponseR,
+  item1 = as.numeric(dS$DrawingR),
+  item2 = as.numeric(dS$DrawingL),
+  Period = PeriodItemS,
+  Period2 = PeriodItemS^2,
+  Site = SiteItemS,
+  Type = TypeItem,
+  rater = as.numeric(dS$ID)
+)
+
+m_full <- stan( file="Stan/Exp2_ContestModel.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+m_full2 <- stan( file="Stan/Exp2_ContestModel2.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+
+save(m_full,m_full2,file="Models/Exp2_ContestModel")
+
+### ICs
+log_lik1 <- extract_log_lik(m_full, merge_chains = FALSE)
+rel_n_eff1 <- relative_eff(exp(log_lik1))
+loo1 <- loo(log_lik1, r_eff = rel_n_eff1, cores = 2)
+
+log_lik2 <- extract_log_lik(m_full2, merge_chains = FALSE)
+rel_n_eff2 <- relative_eff(exp(log_lik2))
+loo2 <- loo(log_lik1, r_eff = rel_n_eff2, cores = 2)
+
+save(loo1,loo2,file="Models/Exp2_OutcomeContestLOOs")
+
+print(precis(m_full,3))
+print(summary(m_full))
+print(plot(m_full))
+```
+
+
+### Plot for main manuscript
+```{r}
+## Plot for main manuscript
+dS_agg <- subset(dS) %>% group_by(ID, Period_chosen,Type) %>% dplyr::summarize(
+  Chosen = n()/276,
+  )
+
+dS_agg$ID = as.factor(dS_agg$ID)
+dS_agg$Period = factor(dS_agg$Period_chosen,levels=c("Old","Medium","Recent"))
+dS_agg$PeriodL <- as.numeric(dS_agg$Period)
+
+Exp2_MainPlot <- ggplot(subset(dS_agg, Type=="Stimuli"),aes(PeriodL,Chosen)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Propensity to choose stimuli from this period as intentional") +
+  xlab("Period") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Early","Intermediate","Late")) +
+  NULL
+
+ggsave("Plots/Exp2_MainPlot.svg", plot = Exp2_MainPlot, width=10)
+
+### Plot for the supplementary materials
+dSupp <- read_csv("Data/Exp2_Intentionality.csv")
+dSupp$Perc <- dSupp$Percentage/100
+
+Exp2_SuppPlot <- ggplot(subset(dSupp, Type=="Stimuli"),aes(PeriodL,Perc)) + 
+  geom_beeswarm(aes(group=TargetSite,color=TargetSite),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Propensity to choose the stimulus as intentional") +
+  xlab("Period") +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Early","Intermediate","Late")) +
+  NULL
+
+Exp2_SuppPlot
+ggsave("Plots/Exp2_SuppPlot.svg", plot = Exp2_SuppPlot, width=10)
+
+```
+
+
+### Now we need to control for site
+```{r}
+m_Site1 <- stan( file="Stan/Exp2_ContestModelSite1.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+m_Site2 <- stan( file="Stan/Exp2_ContestModelSite2.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+save(m_Site1,m_Site2,file="Models/Exp2_Contest_Site")
+
+
+log_likS <- extract_log_lik(m_Site1, merge_chains = FALSE)
+rel_n_effS <- relative_eff(exp(log_likS))
+looS1 <- loo(log_likS, r_eff = rel_n_effS, cores = 2)
+log_likS <- extract_log_lik(m_Site2, merge_chains = FALSE)
+rel_n_effS <- relative_eff(exp(log_likS))
+looS2 <- loo(log_likS, r_eff = rel_n_effS, cores = 2)
+load("Models/Exp2_OutcomeContestLOOs")
+save(loo0,loo1,loo2,looS1,looS2,file="Models/Exp2_OutcomeContestLOOs")
+```
+
+### Now we need to control for type
+
+```{r}
+
+d2 <- list(
+  N_choices = nrow(d),
+  N_items = length(unique(c(d$DrawingL,d$DrawingR))),
+  N_raters = length(unique(d$ID)),
+  y = d$ResponseR,
+  item1 = as.numeric(d$DrawingR),
+  item2 = as.numeric(d$DrawingL),
+  Period = PeriodItem,
+  Period2 = PeriodItem^2,
+  Site = SiteItem,
+  Type = TypeItem,
+  rater = as.numeric(d$ID)
+)
+
+m_Type0 <- stan( file="Stan/Exp2_ContestModel.stan" , data=d2 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+m_Type2 <- stan( file="Stan/Exp2_ContestModelType.stan" , data=d2 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+save(m_Type0,m_Type2,file="Models/Exp2_Contest_Type")
+
+log_likT <- extract_log_lik(m_Type0, merge_chains = FALSE)
+rel_n_effT <- relative_eff(exp(log_likT))
+looT0 <- loo(log_likT, r_eff = rel_n_effT, cores = 2)
+
+log_likT <- extract_log_lik(m_Type2, merge_chains = FALSE)
+rel_n_effT <- relative_eff(exp(log_likT))
+looT2 <- loo(log_likT, r_eff = rel_n_effT, cores = 2)
+
+
+load("Models/Exp2_OutcomeContestLOOs")
+save(loo0,loo1,loo2,looS1,looS2,looT0,looT2,file="Models/Exp2_OutcomeContestLOOs")
+
+```
+
+
+

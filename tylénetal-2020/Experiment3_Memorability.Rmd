@@ -1,0 +1,183 @@
+---
+title: "Experiment3_Memorability"
+author: "RF"
+date: "8/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load file and data
+
+```{r cars}
+pacman::p_load(tidyverse,brms,ggbeeswarm)
+d <- read_csv("Data/Exp3_Memorability.csv")
+d <- d %>% rename(
+  Period = time,
+  Site = TargetSite
+)
+d$Period <- factor(d$Period, levels = c("Old", "Medium", "Recent"))
+d$PeriodL=as.numeric(d$Period)
+
+d$PeriodL <- d$PeriodL - 2
+
+# Transform MSE so that it is on a 0-1 scale
+d$MSE = d$MSE - min(d$MSE)
+d$MSE = d$MSE / max(d$MSE)
+
+CHAINS = 2
+ITER = 8e3
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.999
+  )
+```
+
+## Run analyses
+
+```{r}
+
+MSE_f1 <- bf(MSE ~ 1 + PeriodL + (1 + PeriodL | ID) + (1 | Drawing))
+MSE_f2 <- bf(MSE ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL + I(PeriodL)^2 | ID) + (1 | Drawing))
+
+prior <- c(
+  prior(normal(0,.3), class = Intercept),
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+MSE_m1 <- brm(MSE_f1,
+             data = subset(d,Type=="Stimuli"),
+             family = gaussian,
+             prior = prior,
+             sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+MSE_m1 <- add_ic(MSE_m1,ic="LOO",cores=2)
+
+MSE_m2 <- brm(MSE_f2,
+             data = subset(d,Type=="Stimuli"),
+             family = gaussian,
+             prior = prior,
+             sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+MSE_m2 <- add_ic(MSE_m2,ic="LOO",cores=2)
+
+save(MSE_m1, MSE_m2, file="Models/Exp3_ErrorModels")
+```
+
+## Report the winning model
+```{r}
+# Model comparison
+compare_ic(MSE_m1, MSE_m2,ic="loo")
+model_weights(MSE_m1, MSE_m2,ic="loo")
+
+# Summarizing and visualizing results
+summary(MSE_m1)
+hypothesis(MSE_m1,"PeriodL<0")
+marginal_effects(MSE_m1)
+
+pp_check(MSE_m1,nsamples=100)
+
+
+
+```
+
+## Control analysis for Site
+
+```{r}
+MSE_Site_f0 <-  bf(MSE ~ 1 + PeriodL + Site + 
+                    (1 + PeriodL + Site| ID) + 
+                    (1 | Drawing))
+
+MSE_Site_f1 <-  bf(MSE ~ 1 + PeriodL * Site + 
+                    (1 + PeriodL * Site | ID) + 
+                    (1 | Drawing))
+
+MSE_Site_m0 <- brm(MSE_Site_f0,
+             data = subset(d,Type=="Stimuli"),
+             family = gaussian,
+             prior = prior,
+             sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+MSE_Site_m0 <- add_ic(MSE_Site_m0,ic="LOO",cores=2)
+
+MSE_Site_m1 <- brm(MSE_Site_f1,
+             data = subset(d,Type=="Stimuli"),
+             family = gaussian,
+             prior = prior,
+             sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+MSE_Site_m1 <- add_ic(MSE_Site_m1,ic="LOO",cores=2)
+
+compare_ic(MSE_m1,MSE_Site_m0, MSE_Site_m1, ic="loo")
+model_weights(MSE_m1,MSE_Site_m0, MSE_Site_m1, ic="loo")
+
+marginal_effects(MSE_Site_m1)
+
+save(MSE_Site_m0, MSE_Site_m1, file="Exp3_ErrorModels_Site")
+
+```
+
+## Plots
+
+```{r}
+## Plot for the main manuscript
+
+dS_agg <- subset(d) %>% group_by(ID, PeriodL) %>% dplyr::summarize(
+  meanError = mean(MSE,na.rm=T),
+  )
+
+dS_agg$ID = as.factor(dS_agg$ID)
+
+Exp3_MainPlot <- ggplot(dS_agg,aes(PeriodL,meanError)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Average error in reproducing the stimulus") +
+  xlab("Period") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
+  NULL
+  
+ggsave("Exp3_MainPlot.svg", plot = Exp3_MainPlot)
+
+# Plot for the supplemtary materials
+ggplot(d, aes(PeriodL,MSE)) + 
+  geom_beeswarm(aes(color=Site),alpha=0.5) + 
+  theme_classic() + 
+  geom_smooth(method=lm, alpha=0.8, color="gray50", fill="gray") +
+  xlab("Period") +
+  ylab("Normalized error in reproduction")+
+  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
+  NULL
+
+ggsave("Plots/Exp3_MseDataPlot.svg",width = 10, height = 6)
+
+ggplot(d, aes(PeriodL,MSE,color=Site)) + 
+  geom_beeswarm(alpha=0.5) + 
+  theme_classic() + 
+  geom_smooth(method=lm, alpha=0.8) +
+  xlab("Time") +
+  ylab("Error in reproduction (scale 0-1)")
+
+ggsave("Exp3_MseSiteDataPlot.svg",width = 23, height = 18)
+
+```
+
+
