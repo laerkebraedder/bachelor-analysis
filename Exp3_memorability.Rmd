@@ -1,0 +1,345 @@
+---
+title: "Experiment3_Memorability"
+author: "RF"
+date: "8/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+About data cleaning:
+- If we need to combine the logfiles and the imageSimilarity data, then we would have to pair them based on participant ID and stim. So, the logfile column ID needs to match the similarity column ID, and the logfile column Stimulus needs to match the similarity column Master (possibly the screenshot column also needs to match the copy column).
+1) Rename "master" to "stimulus".
+2) cbind the two df's (make sure to have same number of observations).
+3) Remove outliers (at least images that are completely white where the participant clicked before they got to reproduce the pattern).
+
+
+
+## Load file and data
+
+```{r cars}
+pacman::p_load(tidyverse,brms,ggbeeswarm)
+
+#######################################################
+filePaths3 <- list.files("data/logfiles-memorability/", "\\.csv$", full.names = TRUE)
+logfiles <- do.call(rbind, lapply(filePaths3, read.csv))
+imgSim <- read_csv("data/ImageSimilarityData.csv")
+# Logfile 40 is excluded, because it for some reason is not in the imgSim data.
+
+imgSim <- imgSim %>% rename(
+  Stimulus = drawing,
+  TimeStamp = time
+)
+
+# remove timestamp "2021_Nov_22_1128" <- because the imgsim has more data, but now I just included the extra logfiles instead.
+#imgSim <- imgSim[imgSim$ID != "043" & 
+#                  imgSim$ID != "042" &
+#                   imgSim$ID != "041" &
+#                   imgSim$ID != "040", ] 
+
+
+
+table(imgSim$ID)     #All id's in the imgSim data have one more observation. Perhaps the practice trial was screenshotted as well?
+table(logfiles$ID)
+
+# Now, after Kristian remade the MSR values, they have been dublicated, so we have to remove the reoccuring rows of copy name
+imgSim <- imgSim[!duplicated(imgSim$copy),]
+
+class(logfiles$ID)
+imgSim$ID <- as.integer(imgSim$ID)
+
+dfm <- merge(logfiles, imgSim, by = c("ID", "Stimulus"))
+
+table(dfm$ID) #I can see that the rows that didn't have a match have been omitted, which is good.
+
+dfm$X1 <- NULL
+dfm$Screenshot_name <- NULL
+dfm$TimeStamp.y <- NULL
+#######################################################
+
+# Option 1
+dfm$Complexity_ordered <- ordered(dfm$Complexity)        #xxx do I need to have them ordered or numeric as seen below?
+dfm$Noise_ordered <- ordered(dfm$Noise)
+dfm$BlankSpace_ordered <- ordered(dfm$BlankSpace)
+
+# Option 2
+dfm$Complexity_numeric <- as.numeric(dfm$Complexity)
+dfm$Complexity_numeric <- dfm$Complexity_numeric - 2
+dfm$Noise_numeric <- as.numeric(dfm$Noise)
+dfm$Noise_numeric <- dfm$Noise_numeric - 2
+dfm$BlankSpace_numeric <- as.numeric(dfm$BlankSpace)
+dfm$BlankSpace_numeric <- dfm$BlankSpace_numeric - 2
+
+
+# Transform MSE so that it is on a 0-1 scale
+dfm$MSE = dfm$MSE - min(dfm$MSE)
+dfm$MSE = dfm$MSE / max(dfm$MSE)
+
+CHAINS = 2
+ITER = 4000
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.999
+  )
+```
+
+## Run analyses
+
+# 1. Ordered models
+```{r ordered - complexity}
+dfm$Orientation <- as.factor(dfm$Orientation)
+
+m_c_f1 <- bf(MSE ~ 1 + Complexity_ordered + (1 + Complexity_ordered | ID) + (1 | Stimulus) + (1 | Orientation)) # Do I want orientation as a fixed or random effect?
+
+get_prior(m_c_f1, dfm)
+
+prior_c1 <- c(
+  prior(normal(0,.3), class = Intercept),   #xxx Do I need to alter these priors?
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(1), class = cor)   #I changes this from 5 to 1 due to a) the get_priors, and b) the pp_check.xxx Is this correct?
+)
+
+#Prior model
+m_c_m1_prior <- brm(m_c_f1,
+             data = dfm,
+             family = gaussian,
+             prior = prior_c1,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+
+# prior predictive check
+pp_check(m_c_m1_prior, nsamples=100)
+## Better pp_check
+y_pred_c_m1 <- posterior_linpred(m_c_m1_prior)
+# we want linear predictions before it is linked into log-odds. 
+dens(inv_logit(y_pred_c_m1)) # looks at the density now. Almost uniform distribution discounting extremes. (xxx ???)
+
+
+# Real model
+m_c_m1 <- brm(m_c_f1,
+             data = dfm,
+             family = gaussian,
+             prior = prior_c1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_c_m1"
+             )
+m_c_m1 <- add_ic(m_c_m1,ic="LOO",cores=2)
+
+
+print(summary(m_c_m1))
+print(marginal_effects(m_c_m1))
+
+print(hypothesis(m_c_m1, "Complexity_ordered.L < 0", class = "b"))
+print(hypothesis(m_c_m1, "Complexity_ordered.Q < 0", class = "b"))
+
+plot(hypothesis(m_c_m1, "Complexity_ordered.L < 0", class = "b"))
+```
+
+
+
+# 2. Numeric models
+```{r ordered - complexity}
+dfm$Orientation <- as.factor(dfm$Orientation)
+
+m_c_f2 <- bf(MSE ~ 1 + Complexity_numeric + (1 + Complexity_numeric | ID) + (1 | Stimulus) + (1 | Orientation)) # Do I want orientation as a fixed or random effect?
+
+get_prior(m_c_f1, dfm)
+
+prior_c2.1 <- c(
+  prior(normal(0,.3), class = Intercept), 
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(1), class = cor)
+)
+prior_c2.2 <- c(
+  prior(normal(0,.3), class = Intercept),   
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+#Prior model
+m_c_m2.1_prior <- brm(m_c_f2,
+             data = dfm,
+             family = gaussian,
+             prior = prior_c2.1,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+m_c_m2.2_prior <- brm(m_c_f2,
+             data = dfm,
+             family = gaussian,
+             prior = prior_c2.2,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+
+# prior predictive check
+pp_check(m_c_m2.1_prior, nsamples=100)    #xxx I can't see which one is better...
+y_pred_c_m2.1 <- posterior_linpred(m_c_m2.1_prior)
+dens(inv_logit(y_pred_c_m2.1))
+
+pp_check(m_c_m2.2_prior, nsamples=100)
+y_pred_c_m2.2 <- posterior_linpred(m_c_m2.2_prior)
+dens(inv_logit(y_pred_c_m2.2))
+
+
+# Real model
+m_c_m2.1 <- brm(m_c_f2,
+             data = dfm,
+             family = gaussian,
+             prior = prior_c2.1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_c_m2.1"
+             )
+m_c_m2.1 <- add_ic(m_c_m2.1,ic="LOO",cores=2)
+
+
+m_c_m2.2 <- brm(m_c_f2,
+             data = dfm,
+             family = gaussian,
+             prior = prior_c2.2,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_c_m2.2"
+             )
+m_c_m2.2 <- add_ic(m_c_m2.2,ic="LOO",cores=2)
+
+
+print(summary(m_c_m1))
+print(marginal_effects(m_c_m1))
+
+print(hypothesis(m_c_m2.1, "Complexity_numeric < 0", class = "b"))
+plot(hypothesis(m_c_m1, "Complexity_numeric < 0", class = "b"))
+```
+
+
+
+
+
+
+## Report the winning model
+```{r}
+# Model comparison
+compare_ic(MSE_m1, MSE_m2,ic="loo")
+model_weights(MSE_m1, MSE_m2,ic="loo")
+
+# Summarizing and visualizing results
+summary(MSE_m1)
+hypothesis(MSE_m1,"PeriodL<0")
+marginal_effects(MSE_m1)
+
+pp_check(MSE_m1,nsamples=100)
+
+
+
+```
+
+## Control analysis for Site
+
+```{r}
+MSE_Site_f0 <-  bf(MSE ~ 1 + PeriodL + Site + 
+                    (1 + PeriodL + Site| ID) + 
+                    (1 | Drawing))
+
+MSE_Site_f1 <-  bf(MSE ~ 1 + PeriodL * Site + 
+                    (1 + PeriodL * Site | ID) + 
+                    (1 | Drawing))
+
+MSE_Site_m0 <- brm(MSE_Site_f0,
+             data = subset(d,Type=="Stimuli"),
+             family = gaussian,
+             prior = prior,
+             sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+MSE_Site_m0 <- add_ic(MSE_Site_m0,ic="LOO",cores=2)
+
+MSE_Site_m1 <- brm(MSE_Site_f1,
+             data = subset(d,Type=="Stimuli"),
+             family = gaussian,
+             prior = prior,
+             sample_prior=TRUE,
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+MSE_Site_m1 <- add_ic(MSE_Site_m1,ic="LOO",cores=2)
+
+compare_ic(MSE_m1,MSE_Site_m0, MSE_Site_m1, ic="loo")
+model_weights(MSE_m1,MSE_Site_m0, MSE_Site_m1, ic="loo")
+
+marginal_effects(MSE_Site_m1)
+
+save(MSE_Site_m0, MSE_Site_m1, file="Exp3_ErrorModels_Site")
+
+```
+
+## Plots
+
+```{r}
+## Plot for the main manuscript
+
+dS_agg <- subset(d) %>% group_by(ID, PeriodL) %>% dplyr::summarize(
+  meanError = mean(MSE,na.rm=T),
+  )
+
+dS_agg$ID = as.factor(dS_agg$ID)
+
+Exp3_MainPlot <- ggplot(dS_agg,aes(PeriodL,meanError)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Average error in reproducing the stimulus") +
+  xlab("Period") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
+  NULL
+  
+ggsave("Exp3_MainPlot.svg", plot = Exp3_MainPlot)
+
+# Plot for the supplemtary materials
+ggplot(d, aes(PeriodL,MSE)) + 
+  geom_beeswarm(aes(color=Site),alpha=0.5) + 
+  theme_classic() + 
+  geom_smooth(method=lm, alpha=0.8, color="gray50", fill="gray") +
+  xlab("Period") +
+  ylab("Normalized error in reproduction")+
+  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
+  NULL
+
+ggsave("Plots/Exp3_MseDataPlot.svg",width = 10, height = 6)
+
+ggplot(d, aes(PeriodL,MSE,color=Site)) + 
+  geom_beeswarm(alpha=0.5) + 
+  theme_classic() + 
+  geom_smooth(method=lm, alpha=0.8) +
+  xlab("Time") +
+  ylab("Error in reproduction (scale 0-1)")
+
+ggsave("Exp3_MseSiteDataPlot.svg",width = 23, height = 18)
+
+```
+
+

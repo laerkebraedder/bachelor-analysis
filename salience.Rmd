@@ -28,10 +28,10 @@ dfs$ID <- as.factor(dfs$ID)
 #d <- subset(d,ID!=66) # Excluding participant with all extremely low RTs. Lærke: here they exclude participant 66 due to extremely low rt's, I will have to look through my data to see in this is necessary. I will, however, have to exclude participant 014 and 017 due to them having their boxes completely merged on the screen:
 dfs <- subset(dfs, ID != 014)
 dfs <- subset(dfs, ID != 017)
-# xxx I am not sure is setting these as factors is correct, but I am doint it:
-dfs$Complexity <- as.factor(dfs$Complexity)
-dfs$Noise <- as.factor(dfs$Noise)
-dfs$BlankSpace <- as.factor(dfs$BlankSpace)
+
+dfs$Complexity <- ordered(dfs$Complexity) 
+dfs$Noise <- ordered(dfs$Noise)
+dfs$BlankSpace <- ordered(dfs$BlankSpace)
 
 # xxx I am not sure what this, from the original script, does:
 ## d$PeriodL <- d$PeriodL - 2
@@ -39,17 +39,10 @@ dfs$BlankSpace <- as.factor(dfs$BlankSpace)
 ## dC$RT1 <- dC$RT/max(dC$RT)
 
 
-# xxx Not sure exactly what this does either:
-CHAINS = 2
-ITER = 8e3
-CONTROLS = list(
-  max_treedepth = 20,
-  adapt_delta=0.999
-  )
 ```
 
 
-## Exploratory visualization (xxx obs: this is pretty much an exact replica of the 2020 script)
+## Exploratory visualization (xxx obs: this is pretty much an exact replica of the 2020 script) I am gonna run with gamma as well
 ```{r Exploratory Visualization}
 # Okay, the reason why I don't need a Type column in because I only have the idealized stim in this dataset. I do not have any trials with original engravings as stim.
 
@@ -136,27 +129,52 @@ models:
  - 
 
 ```{r complexity}
-# Models conditioning rate only
-s_c_f1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID) + (1|Stimulus))
-s_c_f2 <- bf(RT ~ 1 + Complexity + I(Complexity)^2 + (1 + Complexity  + I(Complexity)^2 |i| ID) + (1|Stimulus))
-# xxx: I am not sure if i should include the random effects for Stimulus
 
-# Models conditioning rate and shape. xxx; i don't know what that means. What is shape?
-#RT_f1a <- bf(RT ~ 1 + PeriodL + (1 + PeriodL | p | ID) + (1|Drawing),
-#             shape ~ 1 + PeriodL + (1 + PeriodL | p | ID))
-#RT_f2a <- bf(RT ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL  + I(PeriodL)^2  | p | ID) + (1|Drawing),
-#             shape ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL + I(PeriodL)^2 | p | ID))
+CHAINS = 2
+ITER = 4000   # many is good (more reliable), but takes longer time. Originally they had 8e3. Be aware of warnings.
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.999
+  )
+
+
+# Models conditioning rate only
+s_c_f1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID) + (1|Stimulus)) #!!! Don't need random effects for orientation in order to keep it simple. !!! this is an assumption, that we can make observations across orientations. Maybe have it as a fixed effect interaction even? How does orientation modulate complexity? if this is non significant then all is good.
+
+
+# !!! because the complexity is ordered, I only need to run one model because i get one estimate for linear prediction and one for quadratic
+
+
+#########################
+# !!! evid.ratio is what i have to use as an expression of whether the effect is credible or not. x times more evidence for the hypothesis we are testing than all other hypotheses. Rule of thumb ratio over 3 is credible, < 3 is anectodal. post.prob 
+
+# make one model for each compositional dimension. ordinals. then go look at the hypotheses. hypothesis(modelName, "complexityL > 0", class = "b") and hypothesis(modelName, "complexityQ > 0", class = "b"). if evid.ratio is inf then it is very good. (otherwise try class = "bsp", maybe for interactions)
+#########################
+
+# xxx Q: should i make subsets where I remove trials where dimensions of the same level are being compared? like I do in the aesthetics exp?
+# xxx Q: How do I know whether to use the linear or the quadratic beta in my hypothesis testing?
 
 
 # Get the priors to be set
-get_prior(s_c_f2, dfs, family = bernoulli()) # Is the family bernoulli? xxx I don't understand the output. student's t?
+get_prior(s_c_f1, dfs, family = Gamma(link="log"))
 
 
 s_c_prior <- c(
            prior(normal(0, .3), class = Intercept),
            prior(normal(0, .1), class = b),
-           prior(normal(0, .3), class = sd),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
            prior(lkj(5),      class=cor))
+
+s_c_m1_prior <- brm(s_c_f1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+pp_check(s_c_m1_prior, nsamples = 100) # cant see anything but that may not be so bad. make prior post check
+
 
 s_c_m1 <- brm(s_c_f1,
                    family = Gamma(link="log"),
@@ -165,68 +183,51 @@ s_c_m1 <- brm(s_c_f1,
                    sample_prior = TRUE,
                    chains = CHAINS,cores=CHAINS,
                    iter = ITER,
-                   control = CONTROLS)
+                   control = CONTROLS,
+                   file = "models/salience/s_c_m1")
 s_c_m1 <- add_ic(s_c_m1,ic = "loo",cores=CHAINS)
-
-#RT_m1a <- brm(RT_f1a,
-#                   family=Gamma(link="log"),
-#                   data=subset(dC,Type=="Stimuli"),
-#                   prior=RT_prior,
-#                   sample_prior=TRUE,
-#                   chains=CHAINS,cores=CHAINS,
-#                   iter=ITER,
-#                   control = CONTROLS)
-#RT_m1a <- add_ic(RT_m1a,ic="loo",cores=CHAINS)
-
-s_c_m2 <- brm(s_c_f2,
-                   family = Gamma(link="log"),
-                   data = dfs,
-                   prior = s_c_prior,
-                   sample_prior = TRUE,
-                   chains = CHAINS,cores=CHAINS,
-                   iter = ITER,
-                   control = CONTROLS)
-s_c_m2 <- add_ic(s_c_m2,ic = "loo",cores=CHAINS)
-
-#RT_m2a <- brm(RT_f2a,
-#                   family=Gamma(link="log"),
-#                   data=subset(dC,Type=="Stimuli"),
-#                   prior=RT_prior,
-#                   sample_prior=TRUE,
-#                   chains=CHAINS,cores=CHAINS,
-#                   iter=ITER, refresh=10,
-#                   control = CONTROLS)
-#RT_m2a <- add_ic(RT_m2a,ic="loo",cores=CHAINS)
 
 
 #save(s_c_m1, s_c_m2, file = "Models/Salience_RT_Models_complexity")
 
-# Model comparison
-print(compare_ic(s_c_m1, s_c_m2, ic="loo"))
 # Summarizing and visualizing results
 print(summary(s_c_m1))
-print(marginal_effects(s_c_m xxx))
-#print(hypothesis(s_c_m xxx, "PeriodL<0")) #Not sure how to handle this
+print(marginal_effects(s_c_m1))
+#print(hypothesis(s_c_m1, "Complexity < 0")) #xxx Not sure it this is correct or is I need something like Complexity.L < Complexity.Q #Not sure how to handle this
+
+print(hypothesis(s_c_m1, "Complexity.L < 0", class = "b"))
+print(hypothesis(s_c_m1, "Complexity.Q < 0", class = "b"))
+
+plot(hypothesis(s_c_m1, "Complexity.L < 0", class = "b"))
 ```
 
 
-```{r noise}
+```{r Noise}
 # Models conditioning rate only
-s_n_f1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID) + (1|Stimulus))
-s_n_f2 <- bf(RT ~ 1 + Noise + I(Noise)^2 + (1 + Noise  + I(Noise)^2 |i| ID) + (1|Stimulus))
-# xxx: I am not sure if i should include the random effects for Stimulus
+s_n_f1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID) + (1|Stimulus)) 
 
-# Models conditioning rate and shape. xxx; i don't know what that means. What is shape?
-#RT_f1a <- bf(RT ~ 1 + PeriodL + (1 + PeriodL | p | ID) + (1|Drawing),
-#             shape ~ 1 + PeriodL + (1 + PeriodL | p | ID))
-#RT_f2a <- bf(RT ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL  + I(PeriodL)^2  | p | ID) + (1|Drawing),
-#             shape ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL + I(PeriodL)^2 | p | ID))
+
+# Get the priors to be set
+get_prior(s_n_f1, dfs, family = Gamma(link="log"))
+
 
 s_n_prior <- c(
            prior(normal(0, .3), class = Intercept),
            prior(normal(0, .1), class = b),
-           prior(normal(0, .3), class = sd),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
            prior(lkj(5),      class=cor))
+
+s_n_m1_prior <- brm(s_n_f1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+
+pp_check(s_n_m1_prior, nsamples = 100) # cant see anything but that may not be so bad. make prior post check
+
 
 s_n_m1 <- brm(s_n_f1,
                    family = Gamma(link="log"),
@@ -235,68 +236,49 @@ s_n_m1 <- brm(s_n_f1,
                    sample_prior = TRUE,
                    chains = CHAINS,cores=CHAINS,
                    iter = ITER,
-                   control = CONTROLS)
+                   control = CONTROLS,
+                   file = "models/salience/s_n_m1")
 s_n_m1 <- add_ic(s_n_m1,ic = "loo",cores=CHAINS)
 
-#RT_m1a <- brm(RT_f1a,
-#                   family=Gamma(link="log"),
-#                   data=subset(dC,Type=="Stimuli"),
-#                   prior=RT_prior,
-#                   sample_prior=TRUE,
-#                   chains=CHAINS,cores=CHAINS,
-#                   iter=ITER,
-#                   control = CONTROLS)
-#RT_m1a <- add_ic(RT_m1a,ic="loo",cores=CHAINS)
 
-s_n_m2 <- brm(s_n_f2,
-                   family = Gamma(link="log"),
-                   data = dfs,
-                   prior = s_n_prior,
-                   sample_prior = TRUE,
-                   chains = CHAINS,cores=CHAINS,
-                   iter = ITER,
-                   control = CONTROLS)
-s_n_m2 <- add_ic(s_n_m2,ic = "loo",cores=CHAINS)
+#save(s_c_m1, s_c_m2, file = "Models/Salience_RT_Models_complexity")
 
-#RT_m2a <- brm(RT_f2a,
-#                   family=Gamma(link="log"),
-#                   data=subset(dC,Type=="Stimuli"),
-#                   prior=RT_prior,
-#                   sample_prior=TRUE,
-#                   chains=CHAINS,cores=CHAINS,
-#                   iter=ITER, refresh=10,
-#                   control = CONTROLS)
-#RT_m2a <- add_ic(RT_m2a,ic="loo",cores=CHAINS)
-
-
-#save(s_n_m1, s_n_m2, file = "Models/Salience_RT_Models_noise")
-
-# Model comparison
-print(compare_ic(s_n_m1, s_n_m2, ic="loo"))
 # Summarizing and visualizing results
 print(summary(s_n_m1))
-print(marginal_effects(s_n_m xxx))
-#print(hypothesis(s_c_m xxx, "PeriodL<0")) #Not sure how to handle this
+print(marginal_effects(s_n_m1))
+print(conditional_effects(s_n_m1))
+print(hypothesis(s_n_m1, "Noise.Q < 0")) 
+print(hypothesis(s_n_m1, "Noise.L < 0")) 
+plot(hypothesis(s_n_m1, "Noise.L < 0"))
 ```
 
 
-```{r blank space}
+```{r Blank Space}
 # Models conditioning rate only
-s_b_f1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1|Stimulus))
-s_b_f2 <- bf(RT ~ 1 + BlankSpace + I(BlankSpace)^2 + (1 + BlankSpace  + I(BlankSpace)^2 |i| ID) + (1|Stimulus))
-# xxx: I am not sure if i should include the random effects for Stimulus
+s_b_f1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1|Stimulus)) 
 
-# Models conditioning rate and shape. xxx; i don't know what that means. What is shape?
-#RT_f1a <- bf(RT ~ 1 + PeriodL + (1 + PeriodL | p | ID) + (1|Drawing),
-#             shape ~ 1 + PeriodL + (1 + PeriodL | p | ID))
-#RT_f2a <- bf(RT ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL  + I(PeriodL)^2  | p | ID) + (1|Drawing),
-#             shape ~ 1 + PeriodL + I(PeriodL)^2 + (1 + PeriodL + I(PeriodL)^2 | p | ID))
+
+# Get the priors to be set
+get_prior(s_b_f1, dfs, family = Gamma(link="log"))
+
 
 s_b_prior <- c(
            prior(normal(0, .3), class = Intercept),
            prior(normal(0, .1), class = b),
-           prior(normal(0, .3), class = sd),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
            prior(lkj(5),      class=cor))
+
+s_b_m1_prior <- brm(s_b_f1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+
+pp_check(s_b_m1_prior, nsamples = 100) # cant see anything but that may not be so bad. make prior post check
+
 
 s_b_m1 <- brm(s_b_f1,
                    family = Gamma(link="log"),
@@ -305,55 +287,103 @@ s_b_m1 <- brm(s_b_f1,
                    sample_prior = TRUE,
                    chains = CHAINS,cores=CHAINS,
                    iter = ITER,
-                   control = CONTROLS)
+                   control = CONTROLS,
+                   file = "models/salience/s_b_m1")
 s_b_m1 <- add_ic(s_b_m1,ic = "loo",cores=CHAINS)
 
-#RT_m1a <- brm(RT_f1a,
-#                   family=Gamma(link="log"),
-#                   data=subset(dC,Type=="Stimuli"),
-#                   prior=RT_prior,
-#                   sample_prior=TRUE,
-#                   chains=CHAINS,cores=CHAINS,
-#                   iter=ITER,
-#                   control = CONTROLS)
-#RT_m1a <- add_ic(RT_m1a,ic="loo",cores=CHAINS)
 
-s_b_m2 <- brm(s_b_f2,
-                   family = Gamma(link="log"),
-                   data = dfs,
-                   prior = s_b_prior,
-                   sample_prior = TRUE,
-                   chains = CHAINS,cores=CHAINS,
-                   iter = ITER,
-                   control = CONTROLS)
-s_b_m2 <- add_ic(s_b_m2,ic = "loo",cores=CHAINS)
+#save(s_b_m1 file = "models/salience/s_b_m1")
 
-#RT_m2a <- brm(RT_f2a,
-#                   family=Gamma(link="log"),
-#                   data=subset(dC,Type=="Stimuli"),
-#                   prior=RT_prior,
-#                   sample_prior=TRUE,
-#                   chains=CHAINS,cores=CHAINS,
-#                   iter=ITER, refresh=10,
-#                   control = CONTROLS)
-#RT_m2a <- add_ic(RT_m2a,ic="loo",cores=CHAINS)
-
-
-#save(s_b_m1, s_b_m2, file = "Models/Salience_RT_Models_blankspace")
-
-# Model comparison
-print(compare_ic(s_b_m1, s_b_m2, ic="loo"))
 # Summarizing and visualizing results
 print(summary(s_b_m1))
-print(marginal_effects(s_b_m xxx))
-#print(hypothesis(s_c_m xxx, "PeriodL<0")) #Not sure how to handle this
+print(marginal_effects(s_b_m1))
+print(hypothesis(s_b_m1, "BlankSpace.Q < 0")) 
+print(hypothesis(s_b_m1, "BlankSpace.L < 0")) 
+plot(hypothesis(s_b_m1, "BlankSpace.L < 0"))
 ```
 
 
 
 ### Plots of the RT findings
 
-```{r}
+```{r outlier removal xxx not working}
+removeOuts <- function(ts, threshold){
+  higher_threshold_condition <- ts > (mean(ts, na.rm = T) + (threshold*sd(ts, na.rm = T)))
+  lower_threshold_condition <- ts < (mean(ts, na.rm = T) - (threshold*sd(ts, na.rm = T)))
+  ts[higher_threshold_condition] <- NA
+  ts[lower_threshold_condition] <- NA
+  return(ts)
+}
+
+dfs_noOuts <- dfs
+
+threshold = 3
+dfs_noOuts$RT <- removeOuts(dfs_noOuts$RT, threshold)
+
+dfs_noOuts <- na.omit(dfs_noOuts)
+```
+
+
+```{r without outliers}
+## Plot for the main manuscript - Figure N
+dfs_noOuts_agg <- dfs_noOuts %>% group_by(ID, Complexity, Noise, BlankSpace) %>% dplyr::summarize(
+  mRT = mean(RT, na.rm=T),
+  sdRT = sd(RT, na.rm=T),
+  mRT_log = mean(log(RT), na.rm=T),
+  sdRT_log = sd(log(RT), na.rm=T))
+
+dfs_noOuts_agg$Complexity <- as.numeric(dfs_noOuts_agg$Complexity)
+dfs_noOuts_agg$Noise <- as.numeric(dfs_noOuts_agg$Noise)
+dfs_noOuts_agg$BlankSpace <- as.numeric(dfs_noOuts_agg$BlankSpace)
+
+# Complexity plot:
+s_CPlot1 <- ggplot(subset(dfs_noOuts_agg, mRT_log > 0), aes(Complexity, mRT)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Complexity") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
+  NULL
+
+# Noise plot:
+s_NPlot1 <- ggplot(subset(dfs_noOuts_agg, mRT_log > 0), aes(Noise, mRT)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Noise") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
+  NULL
+
+# Blank space plot:
+s_BPlot1 <- ggplot(subset(dfs_noOuts_agg, mRT_log > 0), aes(BlankSpace, mRT)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Blank Space") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
+  NULL
+
+library(patchwork)
+s_CPlot1 +
+  s_NPlot1 +
+  s_BPlot1
+
+#ggsave("Plots/s_CPlot.svg", plot = s_CPlot)
+
+
+```
+
+
+```{r with outliers}
 ## Plot for the main manuscript - Figure N
 dfs_agg <- dfs %>% group_by(ID, Complexity, Noise, BlankSpace) %>% dplyr::summarize(
   mRT = mean(RT, na.rm=T),
@@ -402,11 +432,31 @@ s_BPlot <- ggplot(subset(dfs_agg, mRT_log > 0), aes(BlankSpace, mRT)) +
   NULL
 
 s_CPlot
+s_CPlot1
 s_NPlot
+s_NPlot1
 s_BPlot
+s_BPlot1
+
+library(patchwork)
+s_CPlot +
+  s_NPlot +
+  s_BPlot
 
 #ggsave("Plots/s_CPlot.svg", plot = s_CPlot)
 
-
 ```
+
+
+Or plot the model - plot the posterior data:
+
+```{r}
+conditional_effects(modelName)
+
+conditional_effects(modelName, effects = "parameter1:parameter2")[[1]]
+
+
+plot(hypothesis(modelName, "Complexity < 0"))
+```
+
 

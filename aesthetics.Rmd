@@ -1,0 +1,261 @@
+---
+title: "Untitled"
+author: "Lærke Brædder"
+date: "11/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Experiment 2 - Intentionality
+
+### Load data and libraries
+
+```{r Load data and libraries}
+pacman::p_load(tidyverse,brms,rstan,loo)
+
+filePaths2 <- list.files("data/logfiles-aesthetics/", "\\.csv$", full.names = TRUE)
+dfa <- do.call(rbind, lapply(filePaths2, read.csv))
+
+# Complexity chosen:
+dfa$ComplexityChosen <- 1
+
+if (dfa$Response == "left") {
+  dfa$ComplexityChosen[grepl("c2", dfa$StimulusL)] <- 2 
+  dfa$ComplexityChosen[grepl("c3", dfa$StimulusL)] <- 3
+} else {
+  dfa$ComplexityChosen[grepl("c2", dfa$StimulusR)] <- 2 
+  dfa$ComplexityChosen[grepl("c3", dfa$StimulusR)] <- 3
+}
+  
+dfa$ComplexityChosen <- factor(dfa$ComplexityChosen, ordered = TRUE, 
+                             levels = c("1", "2", "3"))
+############
+dfa$ComplexityRo <- factor(dfa$ComplexityR, ordered = TRUE, 
+                             levels = c("1", "2", "3"))
+dfa$ComplexityLo <- factor(dfa$ComplexityL, ordered = TRUE, 
+                             levels = c("1", "2", "3"))
+dfa$ComplexityR <- as.numeric(dfa$ComplexityRo)-2
+dfa$ComplexityL <- as.numeric(dfa$ComplexityLo)-2
+###############
+
+
+# Noise chosen:
+dfa$NoiseChosen <- 1
+
+if (dfa$Response == "left") {
+  dfa$NoiseChosen[grepl("n2", dfa$StimulusL)] <- 2 
+  dfa$NoiseChosen[grepl("n3", dfa$StimulusL)] <- 3
+} else {
+  dfa$NoiseChosen[grepl("n2", dfa$StimulusR)] <- 2 
+  dfa$NoiseChosen[grepl("n3", dfa$StimulusR)] <- 3
+}
+  
+dfa$NoiseChosen <- factor(dfa$NoiseChosen, ordered = TRUE, 
+                             levels = c("1", "2", "3"))
+
+#Blank space chosen
+dfa$BlankSpaceChosen <- 1
+
+if (dfa$Response == "left") {
+  dfa$BlankSpaceChosen[grepl("b2", dfa$StimulusL)] <- 2 
+  dfa$BlankSpaceChosen[grepl("b3", dfa$StimulusL)] <- 3
+} else {
+  dfa$BlankSpaceChosen[grepl("b2", dfa$StimulusR)] <- 2 
+  dfa$BlankSpaceChosen[grepl("b3", dfa$StimulusR)] <- 3
+}
+  
+dfa$BlankSpaceChosen <- factor(dfa$BlankSpaceChosen, ordered = TRUE, 
+                             levels = c("1", "2", "3"))
+
+
+#d$PeriodR <- as.numeric(d$PeriodRo)-2
+#d$PeriodL <- as.numeric(d$PeriodLo)-2
+
+
+x <- as.factor(as.character(c(dfa$StimulusR,dfa$StimulusL)))
+dfa$StimulusR <- x[seq(nrow(dfa))]
+dfa$StimulusL <- x[(nrow(dfa)+1):length(x)]
+
+#dS <- subset(d,Type=="Stimuli")
+
+#x <- as.factor(as.character(c(dS$DrawingR,dS$DrawingL)))
+#dS$DrawingR <- x[seq(nrow(dS))]
+#dS$DrawingL <- x[(nrow(dS)+1):length(x)]
+
+ComplexityItem <- c(2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3) - 2
+#ComplexityItemS <- PeriodItem[c(2:3,5:6,8:9,11:12,14:15,17:18,20:21,23:24,26:27,29:30,32:33,35:36)]
+NoiseItem <- c(1,1,1,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0)
+#SiteItemS <- c(1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0)
+BlankSpaceItem <- c(1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0)
+
+
+CHAINS = 2
+ITER = 8e3
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.999
+  )
+```
+
+## Analysis 1: Outcome contest model xxx didn't touch this chunk yet
+
+```{r}
+d1 <- list(
+  N_choices = nrow(dS),
+  N_items = length(unique(c(dS$DrawingL,dS$DrawingR))),
+  N_raters = length(unique(dS$ID)),
+  y = dS$ResponseR,
+  item1 = as.numeric(dS$DrawingR),
+  item2 = as.numeric(dS$DrawingL),
+  Period = PeriodItemS,
+  Period2 = PeriodItemS^2,
+  Site = SiteItemS,
+  Type = TypeItem,
+  rater = as.numeric(dS$ID)
+)
+
+m_full <- stan( file="Stan/Exp2_ContestModel.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+m_full2 <- stan( file="Stan/Exp2_ContestModel2.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+
+save(m_full,m_full2,file="Models/Exp2_ContestModel")
+
+### ICs
+log_lik1 <- extract_log_lik(m_full, merge_chains = FALSE)
+rel_n_eff1 <- relative_eff(exp(log_lik1))
+loo1 <- loo(log_lik1, r_eff = rel_n_eff1, cores = 2)
+
+log_lik2 <- extract_log_lik(m_full2, merge_chains = FALSE)
+rel_n_eff2 <- relative_eff(exp(log_lik2))
+loo2 <- loo(log_lik1, r_eff = rel_n_eff2, cores = 2)
+
+save(loo1,loo2,file="Models/Exp2_OutcomeContestLOOs")
+
+print(precis(m_full,3))
+print(summary(m_full))
+print(plot(m_full))
+```
+
+
+### Plot for main manuscript
+```{r}
+## Plot for main manuscript
+#dS_agg <- subset(dS) %>% group_by(ID, Period_chosen,Type) %>% dplyr::summarize(
+#  Chosen = n()/276,   #The number 276 is the number of trials that each participant went through in the 2020 study. We have diff number of trials for each participant since we had a timeout, so I am gonna have to be creative here.
+ # )
+dfa_agg <- subset(dfa) %>% group_by(ID, NoiseChosen) %>% dplyr::summarize(
+  Chosen = n()/table(dfa$ID),
+  )
+
+
+dfa_agg$ID = as.factor(dfa_agg$ID)
+dfa_agg$Complexity = factor(dfa_agg$ComplexityChosen,levels=c("1","2","3"))
+dfa_agg$ComplexityL <- as.numeric(dfa_agg$Complexity)
+dfa_agg$Noise = factor(dfa_agg$NoiseChosen,levels=c("1","2","3"))
+dfa_agg$NoiseL <- as.numeric(dfa_agg$Noise)
+dfa_agg$BlankSpace = factor(dfa_agg$BlankSpaceChosen,levels=c("1","2","3"))
+dfa_agg$BlankSpaceL <- as.numeric(dfa_agg$BlankSpace)
+
+#Complexity plot
+a_c_Plot <- ggplot(dfa_agg, aes(ComplexityL, Chosen)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Propensity to choose stimuli with this level of complexity as more aesthetic") +
+  xlab("Complexity") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low","Medium","High")) +
+  NULL
+
+#Noise plot
+a_n_Plot <- ggplot(dfa_agg, aes(NoiseL, Chosen)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Propensity to choose stimuli with this level of noise as more aesthetic") +
+  xlab("Complexity") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low","Medium","High")) +
+  NULL
+
+# Blank space plot
+a_b_Plot <- ggplot(dfa_agg, aes(BlankSpaceL, BlankSpaceChosen)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Propensity to choose stimuli with this level of complexity as more aesthetic") +
+  xlab("Complexity") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low","Medium","High")) +
+  NULL
+
+# xxx Something is deff not right here. All of the plots are identical...
+a_c_Plot
+a_n_Plot
+a_b_Plot
+
+#ggsave("Plots/Exp2_MainPlot.svg", plot = Exp2_MainPlot, width=10)
+
+```
+
+
+### Now we need to control for site
+```{r}
+m_Site1 <- stan( file="Stan/Exp2_ContestModelSite1.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+m_Site2 <- stan( file="Stan/Exp2_ContestModelSite2.stan" , data=d1 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+save(m_Site1,m_Site2,file="Models/Exp2_Contest_Site")
+
+
+log_likS <- extract_log_lik(m_Site1, merge_chains = FALSE)
+rel_n_effS <- relative_eff(exp(log_likS))
+looS1 <- loo(log_likS, r_eff = rel_n_effS, cores = 2)
+log_likS <- extract_log_lik(m_Site2, merge_chains = FALSE)
+rel_n_effS <- relative_eff(exp(log_likS))
+looS2 <- loo(log_likS, r_eff = rel_n_effS, cores = 2)
+load("Models/Exp2_OutcomeContestLOOs")
+save(loo0,loo1,loo2,looS1,looS2,file="Models/Exp2_OutcomeContestLOOs")
+```
+
+### Now we need to control for type
+
+```{r}
+
+d2 <- list(
+  N_choices = nrow(d),
+  N_items = length(unique(c(d$DrawingL,d$DrawingR))),
+  N_raters = length(unique(d$ID)),
+  y = d$ResponseR,
+  item1 = as.numeric(d$DrawingR),
+  item2 = as.numeric(d$DrawingL),
+  Period = PeriodItem,
+  Period2 = PeriodItem^2,
+  Site = SiteItem,
+  Type = TypeItem,
+  rater = as.numeric(d$ID)
+)
+
+m_Type0 <- stan( file="Stan/Exp2_ContestModel.stan" , data=d2 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+m_Type2 <- stan( file="Stan/Exp2_ContestModelType.stan" , data=d2 , chains=2 , cores=2, iter=8e3, control=list(adapt_delta=0.99) )
+save(m_Type0,m_Type2,file="Models/Exp2_Contest_Type")
+
+log_likT <- extract_log_lik(m_Type0, merge_chains = FALSE)
+rel_n_effT <- relative_eff(exp(log_likT))
+looT0 <- loo(log_likT, r_eff = rel_n_effT, cores = 2)
+
+log_likT <- extract_log_lik(m_Type2, merge_chains = FALSE)
+rel_n_effT <- relative_eff(exp(log_likT))
+looT2 <- loo(log_likT, r_eff = rel_n_effT, cores = 2)
+
+
+load("Models/Exp2_OutcomeContestLOOs")
+save(loo0,loo1,loo2,looS1,looS2,looT0,looT2,file="Models/Exp2_OutcomeContestLOOs")
+
+```
+
+
+
