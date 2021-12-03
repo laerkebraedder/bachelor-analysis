@@ -1,0 +1,326 @@
+---
+title: "Experiment 1: Salience"
+author: "Lærke Brædder"
+date: "12/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Analysis of sub-experiment 1, salience. We want to analyze the time it takes for the image to emerge (rt) as a function of the three compositional dimensions: Blank space (b), noise (n), and complexity (c).
+
+## Loading data and libraries
+```{r Loading data and packages}
+pacman::p_load(tidyverse,
+               lmerTest,
+               brms,
+               fitdistrplus, # xxx Double check if you actually need these last three. What do they do?
+               ggbeeswarm,
+               svglite)
+
+# Loading the logfiles and binding them into one big data frame:
+filePaths1 <- list.files("data/logfiles-salience/", "\\.csv$", full.names = TRUE)
+dfs <- do.call(rbind, lapply(filePaths1, read.csv))
+
+# Cleaning the data up a little:
+dfs <- dfs %>% rename(RT = Reaction_time) #Renaming the reaction time variable to RT
+dfs <- subset(dfs, RT > 0.2) # Removing impossibly fast rt's.
+dfs$Correct <- as.factor(dfs$Correctness) #Creating a new column for correctness where it is a factor. The factor column is named 'Correct'
+dfs <- subset(dfs,!is.na(Correct)) #Removing incorrect responses from the df. xxx what is actually happening here?
+dfs$ID <- as.factor(dfs$ID)
+
+dfs <- subset(dfs, ID != 014)
+dfs <- subset(dfs, ID != 017)
+
+dfs$Complexity <- ordered(dfs$Complexity) 
+dfs$Noise <- ordered(dfs$Noise)
+dfs$BlankSpace <- ordered(dfs$BlankSpace)
+
+
+# xxx I am not sure what this, from the original script, does:
+## d$PeriodL <- d$PeriodL - 2
+## dC <- subset(d,Correct==1)
+## dC$RT1 <- dC$RT/max(dC$RT)
+
+```
+
+
+## Exploratory visualization (xxx obs: this is pretty much an exact replica of the 2020 script) I am gonna run with gamma as well xxx perhaps not include?
+```{r Exploratory Visualization}
+# Okay, the reason why I don't need a Type column in because I only have the idealized stim in this dataset. I do not have any trials with original engravings as stim.
+
+# Double-checking the RTs
+ggplot(dfs, aes(RT)) + 
+  geom_density(aes(fill = Correct, group = Correct, color = Correct), alpha = 0.3) +
+  NULL
+# original: It looks like a nice gamma, but there is a 0 second mode in correct = 0 (Lærke: I don't think there is in mine, but I will have to check what it looks like in theirs). xxx Lærke: Why is there a correct=0? didn't I remove those?
+
+
+## By participant
+ggplot(dfs, aes(RT)) + 
+  geom_density(aes(fill = ID, group = ID, color = ID), alpha = 0.3) +
+  guides(fill = FALSE, group = FALSE, color = FALSE) +
+  NULL
+
+### Distribution analysis by participant
+C1 = subset(dfs, Correctness == 1)
+for (i in unique(dfs$ID)){
+  x = C1$RT[C1$ID == i]
+  fn <- fitdist(x, "norm")
+  Normal = summary(fn)$aic
+  fln <- fitdist(x, "lnorm")
+  LogNormal = summary(fln)$aic
+  fg <- fitdist(x, "gamma")
+  Gamma=summary(fg)$aic
+  x<- data.frame(ID = i, Normal, LogNormal, Gamma)
+  if (exists("FitData")){FitData = rbind(FitData, x)}else{FitData=x}
+}
+
+C1 <- FitData %>% gather(Distribution, Fit, Normal:Gamma, na.rm = FALSE, convert = FALSE)
+
+ggplot(C1, aes(Distribution, Fit)) +
+  geom_violin() +
+  geom_beeswarm(aes(color = Distribution))
+
+# Original: Definitely not normal, not super persuasive difference between lognormal and gamma
+# Original: Conceptual reflection says gamma
+# xxx Lærke: Look at their data to compare
+
+## Let's explore accuracy and rt by the compositional dimensions
+# Complexity:
+ggplot(dfs, aes(Correct)) +
+  geom_bar(stat = "count") + facet_wrap(.~ Complexity)
+
+ggplot(subset(dfs, Correct == 1), aes(Complexity, RT)) +
+  geom_violin() +
+  geom_beeswarm(aes(color = Complexity))
+
+# Noise:
+ggplot(dfs, aes(Correct)) +
+  geom_bar(stat="count") + facet_wrap(.~ Noise)
+
+ggplot(subset(dfs,Correct==1),aes(Noise, RT)) +
+  geom_violin() +
+  geom_beeswarm(aes(color = Noise))
+
+# Blank space:
+ggplot(dfs, aes(Correct)) +
+  geom_bar(stat="count") + facet_wrap(.~ BlankSpace)
+
+ggplot(subset(dfs,Correct==1),aes(BlankSpace, RT)) +
+  geom_violin() +
+  geom_beeswarm(aes(color=BlankSpace))
+
+# xxx these are the same whether or not I filter out incorrect answers. But why are we looking at then if I filtered them out? didn't I?
+
+```
+
+
+### Is RT affected by the compositional dimensions?
+models: 
+ - "s" stands for salience (in case later on I have both salience, memory, and aesthetics models in my environment)
+ - "f" stands for formula
+ - "m" stands for model
+ - "c" stands for complecity
+ - "n" stands for noise
+ - "b" stands for blank space
+ 
+
+## COMPLEXITY MODEL xxx Run these again after outlier removal (27.11.2021)
+
+
+# Models with and without random effects for orientation. These do not have standardized outcome variables. They have ordinal predictor variables. (i.e. they are the same as the models in the chunk above, except they have the original outcome variable scale)
+```{r complexity}
+s_c_f1.1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID)) #!!! Don't need random effects for orientation in order to keep it simple. !!! this is an assumption, that we can make observations across orientations. Maybe have it as a fixed effect interaction even? How does orientation modulate complexity? if this is non significant then all is good. xxx Update: Kristian wrote that orientation does seem to have an effect, so we might wanna add it. xxx Probably don't need random effects for stimulus either, since it is not repeated measures on stimulus.
+
+s_c_prior <- c(
+           prior(normal(0, .3), class = Intercept), #xxx haven't checked the priors. These are the same as in the complexity models.
+           prior(normal(0, .1), class = b),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
+           prior(lkj(5),      class=cor))
+
+s_c_m1.1_prior <- brm(s_c_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+
+pp_check(s_c_m1.1_prior, nsamples = 100)
+
+s_c_m1.1 <- brm(s_c_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_c_m1.1")
+
+# Summarizing and visualizing results
+# m1.1
+print(summary(s_c_m1.1))
+print(marginal_effects(s_c_m1.1))
+#print(hypothesis(s_c_m1.1, "Complexity.L > 0", class = "b"))
+#print(hypothesis(s_c_m1.1, "Complexity.Q > 0", class = "b"))
+#plot(hypothesis(s_c_m1.1, "Complexity.L > 0", class = "b"))
+#plot(hypothesis(s_c_m1.1, "Complexity.Q > 0", class = "b"))
+
+print(hypothesis(s_c_m1.1, "Complexity.L < 0", class = "b"))# I think this is the one.. We hypothesize a negative relationship between rt and complexity (i.e. faster = more salient, and this speed increases with higher levels of complexity)
+print(hypothesis(s_c_m1.1, "Complexity.Q < 0", class = "b"))
+plot(hypothesis(s_c_m1.1, "Complexity.L < 0", class = "b"))
+plot(hypothesis(s_c_m1.1, "Complexity.Q < 0", class = "b"))
+
+aggregate(dfs$RT, list(dfs$Complexity), FUN=mean) 
+```
+
+
+
+## NOISE MODEL
+
+# Model without random effects for orientation. This does not have standardized outcome variable. It does have ordinal predictor variable.
+```{r noise}
+s_n_f1.1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID))
+
+s_n_prior <- c(
+           prior(normal(0, .3), class = Intercept),
+           prior(normal(0, .1), class = b),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
+           prior(lkj(5),      class=cor))
+
+s_n_m1.1_prior <- brm(s_n_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+
+pp_check(s_n_m1.1_prior, nsamples = 100)
+
+s_n_m1.1 <- brm(s_n_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_n_m1.1")
+
+
+# Summarizing and visualizing results
+# m1.1
+print(summary(s_n_m1.1))
+print(marginal_effects(s_n_m1.1))
+#print(hypothesis(s_n_m1.1, "Noise.L < 0", class = "b"))
+#print(hypothesis(s_n_m1.1, "Noise.Q < 0", class = "b"))
+#plot(hypothesis(s_n_m1.1, "Noise.L < 0", class = "b"))
+#plot(hypothesis(s_n_m1.1, "Noise.Q < 0", class = "b"))
+print(hypothesis(s_n_m1.1, "Noise.L > 0", class = "b"))
+print(hypothesis(s_n_m1.1, "Noise.Q > 0", class = "b"))
+plot(hypothesis(s_n_m1.1, "Noise.L > 0", class = "b"))
+plot(hypothesis(s_n_m1.1, "Noise.Q > 0", class = "b"))
+
+aggregate(dfs$RT, list(dfs$Noise), FUN=mean) 
+```
+
+
+```{r Blank Space}
+s_b_f1.1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID))
+
+s_b_prior <- c(
+           prior(normal(0, .3), class = Intercept),
+           prior(normal(0, .1), class = b),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
+           prior(lkj(5),      class=cor))
+
+s_b_m1.1 <- brm(s_b_f1.1,
+                   family = Gamma(link="log"), #xxx the log link is because with reaction times we usually have a long tail on the distribution. since the dependent variable is rt, we model it as a gamma distribution link log. Choices motivated by previous studies' parameter choices.
+                   data = dfs,
+                   prior = s_b_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_b_m1.1")
+
+print(summary(s_b_m1.1))
+print(marginal_effects(s_b_m1.1))
+print(hypothesis(s_b_m1.1, "BlankSpace.L < 0", class = "b"))
+print(hypothesis(s_b_m1.1, "BlankSpace.Q < 0", class = "b"))
+plot(hypothesis(s_b_m1.1, "BlankSpace.L < 0", class = "b"))
+plot(hypothesis(s_b_m1.1, "BlankSpace.Q < 0", class = "b")) #what we see here is that the results correspond with the hypothesis - RT gets lower/faster (i.e. salience increases) with larger areas of blank space. Interesting that we have a positive effect here, but on memorability we have the opposite effect of what we expected - memorywise it may be nice when things "gestalter sammen inde midt på skærmen" making it easier to remember
+# discussion: salience: the stim were very small and complex. !!!
+
+aggregate(dfs$RT, list(dfs$BlankSpace), FUN=mean) 
+```
+
+
+### Plots of the RT findings
+
+```{r with outliers}
+## Plot for the main manuscript - Figure N
+dfs_agg <- dfs %>% group_by(ID, Complexity, Noise, BlankSpace) %>% dplyr::summarize(
+  mRT = mean(RT, na.rm=T),
+  sdRT = sd(RT, na.rm=T),
+  mRT_log = mean(log(RT), na.rm=T),
+  sdRT_log = sd(log(RT), na.rm=T))
+
+dfs_agg$Complexity <- as.numeric(dfs_agg$Complexity)
+dfs_agg$Noise <- as.numeric(dfs_agg$Noise)
+dfs_agg$BlankSpace <- as.numeric(dfs_agg$BlankSpace)
+
+# Complexity plot:
+s_CPlot <- ggplot(subset(dfs_agg, mRT_log > 0), aes(Complexity, mRT)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Complexity") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
+  NULL
+
+# Noise plot:
+s_NPlot <- ggplot(subset(dfs_agg, mRT_log > 0), aes(Noise, mRT)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Noise") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
+  NULL
+
+# Blank space plot:
+s_BPlot <- ggplot(subset(dfs_agg, mRT_log > 0), aes(BlankSpace, mRT)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.3) +
+  geom_point(aes(group=ID,color=ID),alpha=0.3)+
+  geom_smooth(method=lm) +
+  theme_classic() +
+  ylab("Time to emerge (seconds)") +
+  xlab("Blank Space") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
+  NULL
+
+library(patchwork)
+s_CPlot +
+  s_NPlot +
+  s_BPlot
+
+#ggsave("Plots/s_CPlot.svg", plot = s_CPlot)
+
+```
+
+

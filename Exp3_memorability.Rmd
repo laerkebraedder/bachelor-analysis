@@ -33,14 +33,6 @@ imgSim <- imgSim %>% rename(
   TimeStamp = time
 )
 
-# remove timestamp "2021_Nov_22_1128" <- because the imgsim has more data, but now I just included the extra logfiles instead.
-#imgSim <- imgSim[imgSim$ID != "043" & 
-#                  imgSim$ID != "042" &
-#                   imgSim$ID != "041" &
-#                   imgSim$ID != "040", ] 
-
-
-
 table(imgSim$ID)     #All id's in the imgSim data have one more observation. Perhaps the practice trial was screenshotted as well?
 table(logfiles$ID)
 
@@ -54,59 +46,145 @@ dfm <- merge(logfiles, imgSim, by = c("ID", "Stimulus"))
 
 table(dfm$ID) #I can see that the rows that didn't have a match have been omitted, which is good.
 
+class(dfm$ID)
+dfm$ID <- as.factor(dfm$ID)
+dfm$Orientation <- as.factor(dfm$Orientation)
+
 dfm$X1 <- NULL
 dfm$Screenshot_name <- NULL
 dfm$TimeStamp.y <- NULL
+
+# remove the trials where the participants clicked before recreating any pattern
+dfm <- dfm[dfm$copy != "stimulus_o1_b1_c2_n3_034_2021_Nov_09_1330" & 
+                  dfm$copy != "stimulus_o1_b1_c3_n2_009_2021_Oct_28_1621" &
+                   dfm$copy != "stimulus_o1_b3_c1_n2_014_2021_Oct_29_0932" &
+                   dfm$copy != "stimulus_o1_b3_c1_n2_020_2021_Nov_01_0834" &
+                   dfm$copy != "stimulus_o1_b3_c3_n1_034_2021_Nov_09_1331", ] 
+
 #######################################################
 
 # Option 1
-dfm$Complexity_ordered <- ordered(dfm$Complexity)        #xxx do I need to have them ordered or numeric as seen below?
+dfm$Complexity_ordered <- ordered(dfm$Complexity)
 dfm$Noise_ordered <- ordered(dfm$Noise)
 dfm$BlankSpace_ordered <- ordered(dfm$BlankSpace)
 
 # Option 2
+class(dfm$Complexity) #integer
+dfm$Complexity_numeric <- factor(dfm$Complexity, levels = c("1", "2", "3"))
 dfm$Complexity_numeric <- as.numeric(dfm$Complexity)
 dfm$Complexity_numeric <- dfm$Complexity_numeric - 2
+
 dfm$Noise_numeric <- as.numeric(dfm$Noise)
 dfm$Noise_numeric <- dfm$Noise_numeric - 2
 dfm$BlankSpace_numeric <- as.numeric(dfm$BlankSpace)
 dfm$BlankSpace_numeric <- dfm$BlankSpace_numeric - 2
 
 
-# Transform MSE so that it is on a 0-1 scale
-dfm$MSE = dfm$MSE - min(dfm$MSE)
-dfm$MSE = dfm$MSE / max(dfm$MSE)
+# Option 1: Transform MSE so that it is on a 0-1 scale
+dfm$MSE_1 = dfm$MSE - min(dfm$MSE)
+dfm$MSE_1 = dfm$MSE / max(dfm$MSE)
 
+# Option 2: Standardize
+pacman::p_load(rethinking)
+dfm$MSE_2 = standardize(dfm$MSE)
+
+```
+
+## Run analyses
+
+Outcome variable options:
+ - pure MSE
+ - transformed
+ - standardized
+Random effects options:
+ - With / without orientation (xxx orientation as a fixed effect?)
+predictor variable options:
+ - Ordered
+ - Numeric (as in the 2020 study)
+
+```{r}
 CHAINS = 2
 ITER = 4000
 CONTROLS = list(
   max_treedepth = 20,
   adapt_delta=0.999
   )
+
+f1 <- bf(MSE ~ 1 + Complexity_ordered)
+
+get_prior(m1, dfm) #What am I supposed to make of this??xxx
+
+prior <- c(
+  prior(normal(0,.3), class = Intercept), #xxx help
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd)
+)
+
+m1_prior <- brm(f1,
+             data = dfm,
+             family = gaussian,
+             prior = prior,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
 ```
 
-## Run analyses
 
-# 1. Ordered models
+
+# 1. Numeric vs ordered models. Transformed MSE (option 1)
 ```{r ordered - complexity}
-dfm$Orientation <- as.factor(dfm$Orientation)
 
-m_c_f1 <- bf(MSE ~ 1 + Complexity_ordered + (1 + Complexity_ordered | ID) + (1 | Stimulus) + (1 | Orientation)) # Do I want orientation as a fixed or random effect?
+m_c_f1 <- bf(MSE_1 ~ 1 + Complexity_numeric + (1 + Complexity_numeric | ID) + (1 | Stimulus) + (1 | Orientation))
+m_c_f1_q <- bf(MSE_1 ~ 1 + Complexity_numeric + I(Complexity_numeric)^2 
+               (1 + Complexity_numeric + I(Complexity_numeric)^2 | ID) + 
+                 (1 | Stimulus) + 
+                 (1 | Orientation)) #model comparison
+
+m_c_f2 <- bf(MSE_1 ~ 1 + Complexity_ordered + (1 + Complexity_ordered | ID) + (1 | Stimulus) + (1 | Orientation)) #!!! is the orientation error due to the crop from rectangular to quadratic? Maybe just ignore it? bring it up in the discussion briefly. beyond the scope of this study. Interaction model could be made and compared to the pure complexity model.
+m_c_f2.1 <- bf(MSE_1 ~ 1 + Complexity_ordered + (1 + Complexity_ordered | ID) + (1 | Stimulus)) # <- This is probably the one:))
+m_c_f2.2 <- bf(MSE_1 ~ 1 + Complexity_ordered * Orientation + (1 + Complexity_ordered | ID) + (1 | Stimulus)) 
 
 get_prior(m_c_f1, dfm)
+get_prior(m_c_f2.1, dfm)
 
-prior_c1 <- c(
-  prior(normal(0,.3), class = Intercept),   #xxx Do I need to alter these priors?
+m_c_prior1 <- c(
+  prior(normal(0,.3), class = Intercept),   #xxx are these priors wrong? because in the pp_check it seems that the samples are centered around 0, but the dark blue line is not..?
   prior(normal(0,.1), class = b),
   prior(normal(0,.05), class = sd),
-  prior(lkj(1), class = cor)   #I changes this from 5 to 1 due to a) the get_priors, and b) the pp_check.xxx Is this correct?
+  prior(lkj(5), class = cor)
+)
+m_c_prior1.0 <- c(
+  prior(normal(0,.3), class = Intercept), 
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(1), class = cor)   # xxx I am not sure what the diff is, so we'll run with 5. Don't remember why.
 )
 
 #Prior model
-m_c_m1_prior <- brm(m_c_f1,
+m_c_m1_prior <- brm(m_c_f2.1,
              data = dfm,
              family = gaussian,
-             prior = prior_c1,
+             prior = m_c_prior1,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+m_c_m1.0_prior <- brm(m_c_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1.0,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS
+             )
+m_c_m2_prior <- brm(m_c_f2,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
              sample_prior = "only",
                    chains=CHAINS,cores=CHAINS,
                    iter=ITER,
@@ -114,123 +192,333 @@ m_c_m1_prior <- brm(m_c_f1,
              )
 
 # prior predictive check
-pp_check(m_c_m1_prior, nsamples=100)
-## Better pp_check
+pp_check(m_c_m2.1_prior, nsamples=30) #the dark blue line has a very high peak compares to the samples. xxx
 y_pred_c_m1 <- posterior_linpred(m_c_m1_prior)
-# we want linear predictions before it is linked into log-odds. 
 dens(inv_logit(y_pred_c_m1)) # looks at the density now. Almost uniform distribution discounting extremes. (xxx ???)
+
+pp_check(m_c_m2_prior, nsamples=100)
+y_pred_c_m2 <- posterior_linpred(m_c_m2_prior)
+dens(inv_logit(y_pred_c_m2))
 
 
 # Real model
 m_c_m1 <- brm(m_c_f1,
              data = dfm,
              family = gaussian,
-             prior = prior_c1,
+             prior = m_c_prior1,
              sample_prior = TRUE,
                    chains = CHAINS,cores=CHAINS,
                    iter = ITER,
                    control = CONTROLS,
              file = "models/memorability/m_c_m1"
              )
-m_c_m1 <- add_ic(m_c_m1,ic="LOO",cores=2)
+#m_c_m1 <- add_ic(m_c_m1,ic="LOO",cores=2)
 
-
-print(summary(m_c_m1))
-print(marginal_effects(m_c_m1))
-
-print(hypothesis(m_c_m1, "Complexity_ordered.L < 0", class = "b"))
-print(hypothesis(m_c_m1, "Complexity_ordered.Q < 0", class = "b"))
-
-plot(hypothesis(m_c_m1, "Complexity_ordered.L < 0", class = "b"))
-```
-
-
-
-# 2. Numeric models
-```{r ordered - complexity}
-dfm$Orientation <- as.factor(dfm$Orientation)
-
-m_c_f2 <- bf(MSE ~ 1 + Complexity_numeric + (1 + Complexity_numeric | ID) + (1 | Stimulus) + (1 | Orientation)) # Do I want orientation as a fixed or random effect?
-
-get_prior(m_c_f1, dfm)
-
-prior_c2.1 <- c(
-  prior(normal(0,.3), class = Intercept), 
-  prior(normal(0,.1), class = b),
-  prior(normal(0,.05), class = sd),
-  prior(lkj(1), class = cor)
-)
-prior_c2.2 <- c(
-  prior(normal(0,.3), class = Intercept),   
-  prior(normal(0,.1), class = b),
-  prior(normal(0,.05), class = sd),
-  prior(lkj(5), class = cor)
-)
-
-#Prior model
-m_c_m2.1_prior <- brm(m_c_f2,
+m_c_m1_q <- brm(m_c_f1,
              data = dfm,
              family = gaussian,
-             prior = prior_c2.1,
-             sample_prior = "only",
-                   chains=CHAINS,cores=CHAINS,
-                   iter=ITER,
-                   control = CONTROLS
-             )
-m_c_m2.2_prior <- brm(m_c_f2,
-             data = dfm,
-             family = gaussian,
-             prior = prior_c2.2,
-             sample_prior = "only",
-                   chains=CHAINS,cores=CHAINS,
-                   iter=ITER,
-                   control = CONTROLS
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_c_m1_q"
              )
 
-# prior predictive check
-pp_check(m_c_m2.1_prior, nsamples=100)    #xxx I can't see which one is better...
-y_pred_c_m2.1 <- posterior_linpred(m_c_m2.1_prior)
-dens(inv_logit(y_pred_c_m2.1))
-
-pp_check(m_c_m2.2_prior, nsamples=100)
-y_pred_c_m2.2 <- posterior_linpred(m_c_m2.2_prior)
-dens(inv_logit(y_pred_c_m2.2))
-
-
-# Real model
-m_c_m2.1 <- brm(m_c_f2,
+m_c_m2 <- brm(m_c_f2,
              data = dfm,
              family = gaussian,
-             prior = prior_c2.1,
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_c_m2"
+             )
+#m_c_m2 <- add_ic(m_c_m2,ic="LOO",cores=2)
+
+m_c_m2.1 <- brm(m_c_f2.1,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
              sample_prior = TRUE,
                    chains = CHAINS,cores=CHAINS,
                    iter = ITER,
                    control = CONTROLS,
              file = "models/memorability/m_c_m2.1"
              )
-m_c_m2.1 <- add_ic(m_c_m2.1,ic="LOO",cores=2)
+#m_c_m2.1 <- add_ic(m_c_m2.1,ic="LOO",cores=2)
 
-
-m_c_m2.2 <- brm(m_c_f2,
+m_c_m2.2 <- brm(m_c_f2.2,
              data = dfm,
              family = gaussian,
-             prior = prior_c2.2,
+             prior = m_c_prior1,
              sample_prior = TRUE,
                    chains = CHAINS,cores=CHAINS,
                    iter = ITER,
                    control = CONTROLS,
              file = "models/memorability/m_c_m2.2"
              )
-m_c_m2.2 <- add_ic(m_c_m2.2,ic="LOO",cores=2)
+#m_c_m2.2 <- add_ic(m_c_m2.2,ic="LOO",cores=2)
 
 
 print(summary(m_c_m1))
 print(marginal_effects(m_c_m1))
-
-print(hypothesis(m_c_m2.1, "Complexity_numeric < 0", class = "b"))
+print(hypothesis(m_c_m1, "Complexity_numeric < 0", class = "b"))
 plot(hypothesis(m_c_m1, "Complexity_numeric < 0", class = "b"))
+
+print(summary(m_c_m1_q))
+print(marginal_effects(m_c_m1_q))
+print(hypothesis(m_c_m1_q, "Complexity_numeric < 0", class = "b"))
+plot(hypothesis(m_c_m1_q, "Complexity_numeric < 0", class = "b"))
+
+print(summary(m_c_m2))
+print(marginal_effects(m_c_m2))
+print(hypothesis(m_c_m2, "Complexity_ordered.L < 0", class = "b"))
+print(hypothesis(m_c_m2, "Complexity_ordered.Q < 0", class = "b"))
+plot(hypothesis(m_c_m2, "Complexity_ordered.L < 0", class = "b"))
+plot(hypothesis(m_c_m2, "Complexity_ordered.Q < 0", class = "b"))
+
+print(summary(m_c_m2.1))
+print(marginal_effects(m_c_m2.1))
+print(hypothesis(m_c_m2.1, "Complexity_ordered.L > 0", class = "b"))
+print(hypothesis(m_c_m2.1, "Complexity_ordered.Q > 0", class = "b"))
+plot(hypothesis(m_c_m2.1, "Complexity_ordered.L > 0", class = "b"))
+plot(hypothesis(m_c_m2.1, "Complexity_ordered.Q > 0", class = "b"))
+
+print(summary(m_c_m2.2))
+print(marginal_effects(m_c_m2))
+print(hypothesis(m_c_m2.2, "Complexity_ordered.L < 0", class = "b"))
+print(hypothesis(m_c_m2.2, "Complexity_ordered.Q < 0", class = "b"))
+plot(hypothesis(m_c_m2.2, "Complexity_ordered.L < 0", class = "b"))
+plot(hypothesis(m_c_m2.2, "Complexity_ordered.Q < 0", class = "b")) #xxx why do I get an evidence ratio of zero even though the plots seem to show pretty significant effects??
 ```
 
+
+
+# Noise
+```{r Noise models}
+
+m_n_f1 <- bf(MSE_1 ~ 1 + Noise_numeric + (1 + Noise_numeric | ID) + (1 | Stimulus) + (1 | Orientation))
+m_n_f1_q <- bf(MSE_1 ~ 1 + Noise_numeric + I(Noise_numeric)^2 
+               (1 + Noise_numeric + I(Noise_numeric)^2 | ID) + 
+                 (1 | Stimulus) + 
+                 (1 | Orientation))
+
+m_n_f2 <- bf(MSE_1 ~ 1 + Noise_ordered + (1 + Noise_ordered | ID) + (1 | Stimulus) + (1 | Orientation)) 
+m_n_f2.1 <- bf(MSE_1 ~ 1 + Noise_ordered + (1 + Noise_ordered | ID) + (1 | Stimulus)) 
+m_n_f2.2 <- bf(MSE_1 ~ 1 + Noise_ordered * Orientation + (1 + Noise_ordered | ID) + (1 | Stimulus)) 
+
+m_n_prior1 <- c(
+  prior(normal(0,.3), class = Intercept),
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# model
+m_n_m1 <- brm(m_n_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_n_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m1"
+             )
+
+m_n_m1_q <- brm(m_n_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_n_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m1_q"
+             )
+
+m_n_m2 <- brm(m_n_f2,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m2"
+             )
+
+m_n_m2.1 <- brm(m_n_f2.1,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m2.1"
+             )
+
+m_n_m2.2 <- brm(m_n_f2.2,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m2.2"
+             )
+
+print(summary(m_n_m1))
+print(marginal_effects(m_n_m1))
+print(hypothesis(m_n_m1, "Noise_numeric < 0", class = "b"))
+plot(hypothesis(m_n_m1, "Noise_numeric < 0", class = "b"))
+
+print(summary(m_n_m1_q))
+print(marginal_effects(m_n_m1_q))
+print(hypothesis(m_n_m1_q, "Noise_numeric < 0", class = "b"))
+plot(hypothesis(m_n_m1_q, "Noise_numeric < 0", class = "b"))
+
+print(summary(m_n_m2))
+print(marginal_effects(m_n_m2))
+print(hypothesis(m_n_m2, "Noise_ordered.L < 0", class = "b"))
+print(hypothesis(m_n_m2, "Noise_ordered.Q < 0", class = "b"))
+plot(hypothesis(m_n_m2, "Noise_ordered.L < 0", class = "b"))
+plot(hypothesis(m_n_m2, "Noise_ordered.Q < 0", class = "b"))
+
+print(summary(m_n_m2.1))
+print(marginal_effects(m_n_m2.1))
+print(hypothesis(m_n_m2.1, "Noise_ordered.L > 0", class = "b"))
+print(hypothesis(m_n_m2.1, "Noise_ordered.Q > 0", class = "b"))
+plot(hypothesis(m_n_m2.1, "Noise_ordered.L > 0", class = "b"))
+plot(hypothesis(m_n_m2.1, "Noise_ordered.Q > 0", class = "b"))
+
+print(summary(m_n_m2.2))
+print(marginal_effects(m_n_m2))
+print(hypothesis(m_n_m2.2, "Noise_ordered.L < 0", class = "b"))
+print(hypothesis(m_n_m2.2, "Noise_ordered.Q < 0", class = "b"))
+plot(hypothesis(m_n_m2.2, "Noise_ordered.L < 0", class = "b"))
+plot(hypothesis(m_n_m2.2, "Noise_ordered.Q < 0", class = "b"))
+```
+
+
+# Blank Space
+```{r Blank Space models}
+m_b_f1 <- bf(MSE_1 ~ 1 + BlankSpace_numeric + (1 + BlankSpace_numeric | ID) + (1 | Stimulus) + (1 | Orientation))
+m_b_f1_q <- bf(MSE_1 ~ 1 + BlankSpace_numeric + I(BlankSpace_numeric)^2 
+               (1 + BlankSpace_numeric + I(BlankSpace_numeric)^2 | ID) + 
+                 (1 | Stimulus) + 
+                 (1 | Orientation))
+
+m_b_f2 <- bf(MSE_1 ~ 1 + BlankSpace_ordered + (1 + BlankSpace_ordered | ID) + (1 | Stimulus) + (1 | Orientation)) 
+m_b_f2.1 <- bf(MSE_1 ~ 1 + BlankSpace_ordered + (1 + BlankSpace_ordered | ID) + (1 | Stimulus)) 
+m_b_f2.2 <- bf(MSE_1 ~ 1 + BlankSpace_ordered * Orientation + (1 + BlankSpace_ordered | ID) + (1 | Stimulus)) 
+
+m_b_prior1 <- c(
+  prior(normal(0,.3), class = Intercept),
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# model
+m_b_m1 <- brm(m_b_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m1"
+             )
+
+m_b_m1_q <- brm(m_b_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m1_q"
+             )
+
+m_b_m2 <- brm(m_b_f2,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m2"
+             )
+
+m_b_m2.1 <- brm(m_b_f2.1,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m2.1"
+             )
+
+m_b_m2.2 <- brm(m_b_f2.2,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m2.2"
+             )
+
+print(summary(m_b_m1))
+print(marginal_effects(m_b_m1))
+print(hypothesis(m_b_m1, "BlankSpace_numeric < 0", class = "b"))
+plot(hypothesis(m_b_m1, "BlankSpace_numeric < 0", class = "b"))
+
+print(summary(m_b_m1_q))
+print(marginal_effects(m_b_m1_q))
+print(hypothesis(m_b_m1_q, "BlankSpace_numeric < 0", class = "b"))
+plot(hypothesis(m_b_m1_q, "BlankSpace_numeric < 0", class = "b"))
+
+print(summary(m_b_m2))
+print(marginal_effects(m_b_m2))
+print(hypothesis(m_b_m2, "BlankSpace_ordered.L < 0", class = "b"))
+print(hypothesis(m_b_m2, "BlankSpace_ordered.Q < 0", class = "b"))
+plot(hypothesis(m_b_m2, "BlankSpace_ordered.L < 0", class = "b"))
+plot(hypothesis(m_b_m2, "BlankSpace_ordered.Q < 0", class = "b"))
+
+print(summary(m_b_m2.1))
+print(marginal_effects(m_b_m2.1))
+print(hypothesis(m_b_m2.1, "BlankSpace_ordered.L < 0", class = "b"))
+print(hypothesis(m_b_m2.1, "BlankSpace_ordered.Q < 0", class = "b"))
+plot(hypothesis(m_b_m2.1, "BlankSpace_ordered.L < 0", class = "b"))
+plot(hypothesis(m_b_m2.1, "BlankSpace_ordered.Q < 0", class = "b"))
+######
+print(summary(m_b_m2.1))
+print(marginal_effects(m_b_m2.1))
+print(hypothesis(m_b_m2.1, "BlankSpace_ordered.L > 0", class = "b"))
+print(hypothesis(m_b_m2.1, "BlankSpace_ordered.Q > 0", class = "b"))
+plot(hypothesis(m_b_m2.1, "BlankSpace_ordered.L > 0", class = "b"))
+plot(hypothesis(m_b_m2.1, "BlankSpace_ordered.Q > 0", class = "b"))
+
+
+print(summary(m_b_m2.2))
+print(marginal_effects(m_b_m2))
+print(hypothesis(m_b_m2.2, "BlankSpace_ordered.L < 0", class = "b"))
+print(hypothesis(m_b_m2.2, "BlankSpace_ordered.Q < 0", class = "b"))
+plot(hypothesis(m_b_m2.2, "BlankSpace_ordered.L < 0", class = "b"))
+plot(hypothesis(m_b_m2.2, "BlankSpace_ordered.Q < 0", class = "b"))
+```
 
 
 
@@ -253,71 +541,34 @@ pp_check(MSE_m1,nsamples=100)
 
 ```
 
-## Control analysis for Site
-
-```{r}
-MSE_Site_f0 <-  bf(MSE ~ 1 + PeriodL + Site + 
-                    (1 + PeriodL + Site| ID) + 
-                    (1 | Drawing))
-
-MSE_Site_f1 <-  bf(MSE ~ 1 + PeriodL * Site + 
-                    (1 + PeriodL * Site | ID) + 
-                    (1 | Drawing))
-
-MSE_Site_m0 <- brm(MSE_Site_f0,
-             data = subset(d,Type=="Stimuli"),
-             family = gaussian,
-             prior = prior,
-             sample_prior=TRUE,
-                   chains=CHAINS,cores=CHAINS,
-                   iter=ITER,
-                   control = CONTROLS
-             )
-MSE_Site_m0 <- add_ic(MSE_Site_m0,ic="LOO",cores=2)
-
-MSE_Site_m1 <- brm(MSE_Site_f1,
-             data = subset(d,Type=="Stimuli"),
-             family = gaussian,
-             prior = prior,
-             sample_prior=TRUE,
-                   chains=CHAINS,cores=CHAINS,
-                   iter=ITER,
-                   control = CONTROLS
-             )
-MSE_Site_m1 <- add_ic(MSE_Site_m1,ic="LOO",cores=2)
-
-compare_ic(MSE_m1,MSE_Site_m0, MSE_Site_m1, ic="loo")
-model_weights(MSE_m1,MSE_Site_m0, MSE_Site_m1, ic="loo")
-
-marginal_effects(MSE_Site_m1)
-
-save(MSE_Site_m0, MSE_Site_m1, file="Exp3_ErrorModels_Site")
-
-```
 
 ## Plots
 
 ```{r}
 ## Plot for the main manuscript
 
-dS_agg <- subset(d) %>% group_by(ID, PeriodL) %>% dplyr::summarize(
+dfm_agg_c <- subset(dfm) %>% group_by(ID, Complexity_ordered) %>% dplyr::summarize(
   meanError = mean(MSE,na.rm=T),
   )
 
-dS_agg$ID = as.factor(dS_agg$ID)
+dfm_agg_c$ID = as.factor(dfm_agg_c$ID)
 
-Exp3_MainPlot <- ggplot(dS_agg,aes(PeriodL,meanError)) + 
-  geom_line(aes(group=ID,color=ID),alpha=0.3) +
-  geom_point(aes(group=ID,color=ID),alpha=0.3)+
-  geom_smooth(method=lm) +
+Exp3_MainPlot <- ggplot(dfm_agg_c, aes(Complexity_ordered, meanError)) + 
+  geom_line(aes(group = ID, color = ID), alpha = 0.3) +
+  geom_point(aes(group = ID, color = ID), alpha = 0.3) +
+  geom_smooth(method = lm) +  #where is the smooth? xxx
   theme_classic() +
   ylab("Average error in reproducing the stimulus") +
-  xlab("Period") +
-  scale_color_discrete(guide=FALSE) +
-  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
+  xlab("Complexity") +
+  scale_color_discrete(guide = FALSE) +
+  #scale_x_continuous(breaks = c(1, 2, 3), labels = c("Low", "Medium", "High")) +
   NULL
-  
-ggsave("Exp3_MainPlot.svg", plot = Exp3_MainPlot)
+Exp3_MainPlot
+#ggsave("Exp3_MainPlot.svg", plot = Exp3_MainPlot)
+
+
+
+
 
 # Plot for the supplemtary materials
 ggplot(d, aes(PeriodL,MSE)) + 
@@ -341,5 +592,28 @@ ggplot(d, aes(PeriodL,MSE,color=Site)) +
 ggsave("Exp3_MseSiteDataPlot.svg",width = 23, height = 18)
 
 ```
+
+
+
+
+
+
+```{r Kristians plots}
+
+ggplot(dfm, aes(Complexity, MSE, color = Orientation)) + 
+  geom_point() +
+  geom_smooth(method = lm)
+
+ggplot(dfm, aes(Noise, MSE, color = Orientation)) + 
+  geom_point() +
+  geom_smooth(method = lm)
+
+ggplot(dfm, aes(BlankSpace, MSE, color = Orientation)) + 
+  geom_point() +
+  geom_smooth(method = lm)
+```
+
+
+
 
 

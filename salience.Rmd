@@ -33,12 +33,36 @@ dfs$Complexity <- ordered(dfs$Complexity)
 dfs$Noise <- ordered(dfs$Noise)
 dfs$BlankSpace <- ordered(dfs$BlankSpace)
 
+#dfs$RT_std <- standardize(dfs$RT) #xxx should I even standardize? <- can´t use standardize for a gamma model, because it goes below zero. Is the method below ok?
+# Option 1: Transform MSE so that it is on a 0-1 scale
+dfs$RT_std = dfs$RT - min(dfs$RT)
+dfs$RT_std = dfs$RT / max(dfs$RT)
+
 # xxx I am not sure what this, from the original script, does:
 ## d$PeriodL <- d$PeriodL - 2
 ## dC <- subset(d,Correct==1)
 ## dC$RT1 <- dC$RT/max(dC$RT)
 
 
+```
+
+
+```{r outlier removal}
+# Maybe not necessary? xxx probs don't do it
+removeOuts <- function(ts, threshold){
+  higher_threshold_condition <- ts > (mean(ts, na.rm = T) + (threshold*sd(ts, na.rm = T)))
+  lower_threshold_condition <- ts < (mean(ts, na.rm = T) - (threshold*sd(ts, na.rm = T)))
+  ts[higher_threshold_condition] <- NA
+  ts[lower_threshold_condition] <- NA
+  return(ts)
+}
+
+threshold = 3
+dfs$RT <- removeOuts(dfs$RT, threshold)
+
+dfs <- na.omit(dfs)
+
+# The df went from 3430 observations to 3150 observations when removing outliers.
 ```
 
 
@@ -128,7 +152,10 @@ models:
  - s_c_f1
  - 
 
-```{r complexity}
+## COMPLEXITY MODELS xxx Run these again after outlier removal (27.11.2021)
+
+# Models with and without random effects for orientation. These have standardized outcome variable (between 0 and 1). They have ordinal predictor variables.
+```{r complexity 1}
 
 CHAINS = 2
 ITER = 4000   # many is good (more reliable), but takes longer time. Originally they had 8e3. Be aware of warnings.
@@ -138,9 +165,8 @@ CONTROLS = list(
   )
 
 
-# Models conditioning rate only
-s_c_f1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID) + (1|Stimulus)) #!!! Don't need random effects for orientation in order to keep it simple. !!! this is an assumption, that we can make observations across orientations. Maybe have it as a fixed effect interaction even? How does orientation modulate complexity? if this is non significant then all is good.
-
+s_c_f1 <- bf(RT_std ~ 1 + Complexity + (1 + Complexity | ID) + (1 | Stimulus)) #!!! Don't need random effects for orientation in order to keep it simple. !!! this is an assumption, that we can make observations across orientations. Maybe have it as a fixed effect interaction even? How does orientation modulate complexity? if this is non significant then all is good. xxx Update: Kristian wrote that orientation does seem to have an effect, so we might wanna add it.
+s_c_f2 <- bf(RT_std ~ 1 + Complexity + (1 + Complexity | ID) + (1 | Stimulus) + (1 | Orientation))
 
 # !!! because the complexity is ordered, I only need to run one model because i get one estimate for linear prediction and one for quadratic
 
@@ -157,7 +183,6 @@ s_c_f1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID) + (1|Stimulus)) #!!! Do
 
 # Get the priors to be set
 get_prior(s_c_f1, dfs, family = Gamma(link="log"))
-
 
 s_c_prior <- c(
            prior(normal(0, .3), class = Intercept),
@@ -185,8 +210,21 @@ s_c_m1 <- brm(s_c_f1,
                    iter = ITER,
                    control = CONTROLS,
                    file = "models/salience/s_c_m1")
-s_c_m1 <- add_ic(s_c_m1,ic = "loo",cores=CHAINS)
+s_c_m1 <- add_criterion(s_c_m1, criterion = c("bayes_R2", "loo"))
+#s_c_m1 <- add_criterion(s_c_m1, criterion = c("bayes_R2", "loo"), moment_match = TRUE)
 
+
+s_c_m2 <- brm(s_c_f2,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_c_m2")
+s_c_m2 <- add_criterion(s_c_m2, criterion = c("bayes_R2", "loo"))
+#s_c_m2 <- add_criterion(s_c_m2, criterion = c("bayes_R2", "loo"), moment_match = TRUE) 
 
 #save(s_c_m1, s_c_m2, file = "Models/Salience_RT_Models_complexity")
 
@@ -194,15 +232,337 @@ s_c_m1 <- add_ic(s_c_m1,ic = "loo",cores=CHAINS)
 print(summary(s_c_m1))
 print(marginal_effects(s_c_m1))
 #print(hypothesis(s_c_m1, "Complexity < 0")) #xxx Not sure it this is correct or is I need something like Complexity.L < Complexity.Q #Not sure how to handle this
-
 print(hypothesis(s_c_m1, "Complexity.L < 0", class = "b"))
 print(hypothesis(s_c_m1, "Complexity.Q < 0", class = "b"))
-
 plot(hypothesis(s_c_m1, "Complexity.L < 0", class = "b"))
+plot(hypothesis(s_c_m1, "Complexity.Q < 0", class = "b"))
+
+
+# m2
+print(summary(s_c_m2))
+print(marginal_effects(s_c_m2))
+print(hypothesis(s_c_m2, "Complexity.L < 0", class = "b"))
+print(hypothesis(s_c_m2, "Complexity.Q < 0", class = "b"))
+plot(hypothesis(s_c_m2, "Complexity.L < 0", class = "b"))
+```
+
+# Models with and without random effects for orientation. These do not have standardized outcome variables. They have ordinal predictor variables. (i.e. they are the same as the models in the chunk above, except they have the original outcome variable scale)
+```{r complexity 2}
+s_c_f1.1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID) + (1 | Stimulus)) #!!! Don't need random effects for orientation in order to keep it simple. !!! this is an assumption, that we can make observations across orientations. Maybe have it as a fixed effect interaction even? How does orientation modulate complexity? if this is non significant then all is good. xxx Update: Kristian wrote that orientation does seem to have an effect, so we might wanna add it.
+s_c_f2.1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID) + (1 | Stimulus) + (1 | Orientation))
+
+# xxx Can I run with the same priors regardless of whether the outcome is scaled or not? I guess so.. The priors don't have anything to do with the outcome, I think? So we use the same priors as in the chunk above.
+
+s_c_m1.1_prior <- brm(s_c_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+s_c_m2.1_prior <- brm(s_c_f2.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+
+pp_check(s_c_m1.1_prior, nsamples = 100)
+pp_check(s_c_m2.1_prior, nsamples = 100)
+
+
+s_c_m1.1 <- brm(s_c_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_c_m1.1")
+s_c_m1.1 <- add_criterion(s_c_m1.1, criterion = c("bayes_R2", "loo"))
+#s_c_m1.1 <- add_criterion(s_c_m1.1, criterion = c("bayes_R2", "loo"), moment_match = TRUE)
+
+
+
+s_c_m2.1 <- brm(s_c_f2.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_c_m2.1")
+s_c_m2.1 <- add_criterion(s_c_m2.1, criterion = c("bayes_R2", "loo")) 
+#s_c_m2.1 <- add_criterion(s_c_m2.1, criterion = c("bayes_R2", "loo"), moment_match = TRUE) 
+
+
+# Summarizing and visualizing results
+# m1.1
+print(summary(s_c_m1.1))
+print(marginal_effects(s_c_m1.1))
+print(hypothesis(s_c_m1.1, "Complexity.L < 0", class = "b"))
+print(hypothesis(s_c_m1.1, "Complexity.Q < 0", class = "b"))
+plot(hypothesis(s_c_m1.1, "Complexity.L < 0", class = "b"))
+plot(hypothesis(s_c_m1.1, "Complexity.Q < 0", class = "b"))
+
+# m2.1
+print(summary(s_c_m2.1))
+print(marginal_effects(s_c_m2.1))
+print(hypothesis(s_c_m2.1, "Complexity.L < 0", class = "b"))
+print(hypothesis(s_c_m2.1, "Complexity.Q < 0", class = "b"))
+plot(hypothesis(s_c_m2.1, "Complexity.L < 0", class = "b"))
+plot(hypothesis(s_c_m2.1, "Complexity.Q < 0", class = "b"))
 ```
 
 
-```{r Noise}
+
+## NOISE MODELS
+# Models with and without random effects for orientation. These have standardized outcome variable (between 0 and 1). They have ordinal predictor variables.
+```{r noise 1}
+s_n_f1 <- bf(RT_std ~ 1 + Noise + (1 + Noise | ID) + (1 | Stimulus))
+s_n_f2 <- bf(RT_std ~ 1 + Noise + (1 + Noise | ID) + (1 | Stimulus) + (1 | Orientation))
+
+
+# Get the priors to be set
+get_prior(s_n_f1, dfs, family = Gamma(link="log")) #xxx suggests having the lkj prior 1. Might wanna try that...
+
+s_n_prior <- c(
+           prior(normal(0, .3), class = Intercept), #xxx haven't checked the priors. These are the same as in the complexity models.
+           prior(normal(0, .1), class = b),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
+           prior(lkj(5),      class=cor))
+
+s_n_m1_prior <- brm(s_n_f1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_c_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+pp_check(s_n_m1_prior, nsamples = 100) # cant see anything but that may not be so bad. make prior post check
+
+
+s_n_m1 <- brm(s_n_f1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_n_m1")
+#s_n_m1 <- add_criterion(s_n_m1, criterion = c("bayes_R2", "loo"), moment_match = TRUE)
+s_n_m1 <- add_criterion(s_n_m1, criterion = c("bayes_R2", "loo"))
+
+
+s_n_m2 <- brm(s_n_f2,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_n_m2")
+#s_n_m2 <- add_criterion(s_n_m2, criterion = c("bayes_R2", "loo"), moment_match = TRUE) 
+s_n_m2 <- add_criterion(s_n_m2, criterion = c("bayes_R2", "loo")) 
+
+# Summarizing and visualizing results
+print(summary(s_n_m1))
+print(marginal_effects(s_n_m1))
+print(hypothesis(s_n_m1, "Noise.L < 0", class = "b"))
+print(hypothesis(s_n_m1, "Noise.Q < 0", class = "b"))
+plot(hypothesis(s_n_m1, "Noise.L < 0", class = "b"))
+plot(hypothesis(s_n_m1, "Noise.Q < 0", class = "b"))
+
+
+# m2
+print(summary(s_n_m2))
+print(marginal_effects(s_n_m2))
+print(hypothesis(s_n_m2, "Noise.L < 0", class = "b"))
+print(hypothesis(s_n_m2, "Noise.Q < 0", class = "b"))
+plot(hypothesis(s_n_m2, "Noise.L < 0", class = "b"))
+plot(hypothesis(s_n_m2, "Noise.Q < 0", class = "b"))
+```
+
+# Models with and without random effects for orientation. These do not have standardized outcome variables. They have ordinal predictor variables. (i.e. they are the same as the models in the chunk above, except they have the original outcome variable scale)
+```{r noise 2}
+s_n_f1.1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID) + (1 | Stimulus))
+s_n_f2.1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID) + (1 | Stimulus) + (1 | Orientation))
+
+
+s_n_m1.1_prior <- brm(s_n_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+s_n_m2.1_prior <- brm(s_n_f2.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = "only",
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS)
+
+pp_check(s_n_m1.1_prior, nsamples = 100)
+pp_check(s_n_m2.1_prior, nsamples = 100)
+
+
+s_n_m1.1 <- brm(s_n_f1.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_n_m1.1")
+#s_n_m1.1 <- add_criterion(s_n_m1.1, criterion = c("bayes_R2", "loo"), moment_match = TRUE)
+s_n_m1.1 <- add_criterion(s_n_m1.1, criterion = c("bayes_R2", "loo"))
+
+
+s_n_m2.1 <- brm(s_n_f2.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_n_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_n_m2.1")
+s_n_m2.1 <- add_criterion(s_n_m2.1, criterion = c("bayes_R2", "loo")) 
+#s_n_m2.1 <- add_criterion(s_n_m2.1, criterion = c("bayes_R2", "loo"), moment_match = TRUE) 
+
+# Summarizing and visualizing results
+# m1.1
+print(summary(s_n_m1.1))
+print(marginal_effects(s_n_m1.1))
+print(hypothesis(s_n_m1.1, "Noise.L < 0", class = "b"))
+print(hypothesis(s_n_m1.1, "Noise.Q < 0", class = "b"))
+plot(hypothesis(s_n_m1.1, "Noise.L < 0", class = "b"))
+plot(hypothesis(s_n_m1.1, "Noise.Q < 0", class = "b"))
+
+# m2.1
+print(summary(s_c_m2.1))
+print(marginal_effects(s_c_m2.1))
+print(hypothesis(s_n_m2.1, "Noise.L < 0", class = "b"))
+print(hypothesis(s_n_m2.1, "Noise.Q < 0", class = "b"))
+plot(hypothesis(s_n_m2.1, "Noise.L < 0", class = "b"))
+plot(hypothesis(s_n_m2.1, "Noise.Q < 0", class = "b"))
+```
+
+
+```{r Blank Space (all)}
+
+s_b_f1 <- bf(RT_std ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1 | Stimulus))
+s_b_f2 <- bf(RT_std ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1 | Stimulus) + (1 | Orientation))
+
+
+s_b_prior <- c(
+           prior(normal(0, .3), class = Intercept), #xxx haven't checked the priors. These are the same as in the complexity models.
+           prior(normal(0, .1), class = b),
+           prior(normal(0, .3), class = sd),   #not too much constraint, pretty high
+           prior(lkj(5),      class=cor))
+
+s_b_m1 <- brm(s_b_f1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_b_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_b_m1")
+s_b_m1 <- add_criterion(s_b_m1, criterion = c("bayes_R2", "loo")) 
+
+s_b_m2 <- brm(s_b_f2,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_b_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_b_m2")
+s_b_m2 <- add_criterion(s_b_m2, criterion = c("bayes_R2", "loo")) 
+
+
+print(summary(s_b_m1))
+print(marginal_effects(s_b_m1))
+print(hypothesis(s_b_m1, "BlankSpace.L < 0", class = "b"))
+print(hypothesis(s_b_m1, "BlankSpace.Q < 0", class = "b"))
+plot(hypothesis(s_b_m1, "BlankSpace.L < 0", class = "b"))
+plot(hypothesis(s_b_m1, "BlankSpace.Q < 0", class = "b"))
+
+print(summary(s_b_m2))
+print(marginal_effects(s_b_m2))
+print(hypothesis(s_b_m2, "BlankSpace.L < 0", class = "b"))
+print(hypothesis(s_b_m2, "BlankSpace.Q < 0", class = "b"))
+plot(hypothesis(s_b_m2, "BlankSpace.L < 0", class = "b"))
+plot(hypothesis(s_b_m2, "BlankSpace.Q < 0", class = "b"))
+
+```
+
+
+```{r Blank Space (all)}
+s_b_f1.1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1 | Stimulus))
+s_b_f2.1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1 | Stimulus) + (1 | Orientation))
+
+s_b_m1.1 <- brm(s_b_f1.1,
+                   family = Gamma(link="log"), #xxx the log link is because with reaction times we usually have a long tail on the distribution. since the dependent variable is rt, we model it as a gamma distribution link log. Choices motivated by previous studies' parameter choices.
+                   data = dfs,
+                   prior = s_b_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_b_m1.1")
+#s_b_m1.1 <- add_criterion(s_b_m1.1, criterion = c("bayes_R2", "loo")) 
+s_b_m1.1 <- add_criterion(s_b_m1.1, criterion = c("bayes_R2", "loo"), moment_match = TRUE)  #xxx what does moment match actually do? how come sometimes I need it and sometimes I don't (even on the same model, I think)?
+
+s_b_m2.1 <- brm(s_b_f2.1,
+                   family = Gamma(link="log"),
+                   data = dfs,
+                   prior = s_b_prior,
+                   sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+                   file = "models/salience/s_b_m2.1")
+s_b_m2.1 <- add_criterion(s_b_m2.1, criterion = c("bayes_R2", "loo")) 
+
+
+print(summary(s_b_m1.1))
+print(marginal_effects(s_b_m1.1))
+print(hypothesis(s_b_m1.1, "BlankSpace.L < 0", class = "b"))
+print(hypothesis(s_b_m1.1, "BlankSpace.Q < 0", class = "b"))
+plot(hypothesis(s_b_m1.1, "BlankSpace.L < 0", class = "b"))
+plot(hypothesis(s_b_m1.1, "BlankSpace.Q < 0", class = "b")) #interesting that we have a positive effect here, but on memorability we have the opposite effect of what we expected - memorywise it may be nice when things "gestalter sammen inde midt på skærmen" making it easier to remember
+# discussion: salience: the stim were very small and complex
+
+print(summary(s_b_m2.1))
+print(marginal_effects(s_b_m2.1))
+print(hypothesis(s_b_m2.1, "BlankSpace.L < 0", class = "b"))
+print(hypothesis(s_b_m2.1, "BlankSpace.Q < 0", class = "b"))
+plot(hypothesis(s_b_m2.1, "BlankSpace.L < 0", class = "b"))
+plot(hypothesis(s_b_m2.1, "BlankSpace.Q < 0", class = "b"))
+```
+
+
+
+
+
+```{r Noise (old)}
 # Models conditioning rate only
 s_n_f1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID) + (1|Stimulus)) 
 
@@ -253,7 +613,7 @@ plot(hypothesis(s_n_m1, "Noise.L < 0"))
 ```
 
 
-```{r Blank Space}
+```{r Blank Space (old)}
 # Models conditioning rate only
 s_b_f1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1|Stimulus)) 
 
@@ -305,82 +665,6 @@ plot(hypothesis(s_b_m1, "BlankSpace.L < 0"))
 
 
 ### Plots of the RT findings
-
-```{r outlier removal xxx not working}
-removeOuts <- function(ts, threshold){
-  higher_threshold_condition <- ts > (mean(ts, na.rm = T) + (threshold*sd(ts, na.rm = T)))
-  lower_threshold_condition <- ts < (mean(ts, na.rm = T) - (threshold*sd(ts, na.rm = T)))
-  ts[higher_threshold_condition] <- NA
-  ts[lower_threshold_condition] <- NA
-  return(ts)
-}
-
-dfs_noOuts <- dfs
-
-threshold = 3
-dfs_noOuts$RT <- removeOuts(dfs_noOuts$RT, threshold)
-
-dfs_noOuts <- na.omit(dfs_noOuts)
-```
-
-
-```{r without outliers}
-## Plot for the main manuscript - Figure N
-dfs_noOuts_agg <- dfs_noOuts %>% group_by(ID, Complexity, Noise, BlankSpace) %>% dplyr::summarize(
-  mRT = mean(RT, na.rm=T),
-  sdRT = sd(RT, na.rm=T),
-  mRT_log = mean(log(RT), na.rm=T),
-  sdRT_log = sd(log(RT), na.rm=T))
-
-dfs_noOuts_agg$Complexity <- as.numeric(dfs_noOuts_agg$Complexity)
-dfs_noOuts_agg$Noise <- as.numeric(dfs_noOuts_agg$Noise)
-dfs_noOuts_agg$BlankSpace <- as.numeric(dfs_noOuts_agg$BlankSpace)
-
-# Complexity plot:
-s_CPlot1 <- ggplot(subset(dfs_noOuts_agg, mRT_log > 0), aes(Complexity, mRT)) + 
-  geom_line(aes(group=ID,color=ID),alpha=0.3) +
-  geom_point(aes(group=ID,color=ID),alpha=0.3)+
-  geom_smooth(method=lm) +
-  theme_classic() +
-  ylab("Time to emerge (seconds)") +
-  xlab("Complexity") +
-  scale_color_discrete(guide=FALSE) +
-  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
-  NULL
-
-# Noise plot:
-s_NPlot1 <- ggplot(subset(dfs_noOuts_agg, mRT_log > 0), aes(Noise, mRT)) + 
-  geom_line(aes(group=ID,color=ID),alpha=0.3) +
-  geom_point(aes(group=ID,color=ID),alpha=0.3)+
-  geom_smooth(method=lm) +
-  theme_classic() +
-  ylab("Time to emerge (seconds)") +
-  xlab("Noise") +
-  scale_color_discrete(guide=FALSE) +
-  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
-  NULL
-
-# Blank space plot:
-s_BPlot1 <- ggplot(subset(dfs_noOuts_agg, mRT_log > 0), aes(BlankSpace, mRT)) + 
-  geom_line(aes(group=ID,color=ID),alpha=0.3) +
-  geom_point(aes(group=ID,color=ID),alpha=0.3)+
-  geom_smooth(method=lm) +
-  theme_classic() +
-  ylab("Time to emerge (seconds)") +
-  xlab("Blank Space") +
-  scale_color_discrete(guide=FALSE) +
-  scale_x_continuous(breaks = c(1,2,3),labels=c("Low", "Medium", "High")) +
-  NULL
-
-library(patchwork)
-s_CPlot1 +
-  s_NPlot1 +
-  s_BPlot1
-
-#ggsave("Plots/s_CPlot.svg", plot = s_CPlot)
-
-
-```
 
 
 ```{r with outliers}

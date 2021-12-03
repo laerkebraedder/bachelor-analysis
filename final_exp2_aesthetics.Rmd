@@ -1,0 +1,745 @@
+---
+title: "Experiment 2: Aesthetics"
+author: "Lærke Brædder"
+date: "12/2/2021"
+output: word_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## Gather data
+Load packages, data, wd etc. 
+
+```{r}
+# packages
+pacman::p_load(brms, tidyverse,lmerTest,ggbeeswarm, lme4, rethinking, bayesplot)
+
+citation("rethinking")
+citation("bayesplot")
+```
+
+
+
+Collect data from several csv files
+
+```{r}
+# import data from several csv files
+filePaths2 <- list.files("data/logfiles-aesthetics/", "\\.csv$", full.names = TRUE)
+dfa <- do.call(rbind, lapply(filePaths2, read.csv))
+
+
+# Dummy coding two new response columns:
+dfa <- dfa %>% 
+  mutate(
+    ResponseL = ifelse(Response == "left", 1, 0),
+    ResponseR = ifelse(Response == "right", 1, 0)
+    )
+
+
+
+dfa <- dfa %>%    # xxx decide whether or not to have capital first letters
+  mutate(
+    ID = as.factor(ID),
+    Age = as.factor(Age),
+    Gender = as.factor(Gender),
+    StimulusL = as.factor(StimulusL), 
+    StimulusR = as.factor(StimulusR),
+    ResponseL = as.factor(ResponseL),
+    ResponseR = as.factor(ResponseR), 
+    ComplexityL = as.factor(ComplexityL),
+    ComplexityR= as.factor(ComplexityR),
+    NoiseL = as.factor(NoiseL),
+    NoiseR= as.factor(NoiseR),
+    BlankSpaceL = as.factor(BlankSpaceL),
+    BlankSpaceR= as.factor(BlankSpaceR),
+    OreintationL = as.factor(OrientationL),
+    OreintationR = as.factor(OrientationR),
+    reaction_time = reaction_time
+  )
+
+# Create csv in shared folder
+write.csv(dfa,"data/exp2_dfa.csv", row.names = FALSE)
+```
+
+
+
+
+## Preprocess data
+Load packages, wd, and data
+
+```{r}
+# packages
+pacman::p_load(tidyverse,lmerTest,ggbeeswarm, lme4, rethinking, brms)
+
+# import data from csv - Lærke: I guess this isn't actually necessary for me, but here goes:
+dfa <- read_csv("data/exp2_dfa.csv")
+```
+
+
+
+Create stimPair column (look in one of the other scripts)
+
+Remove trials of same generation forced choice (xxx Generation must mean period. So in my case, I don't want forced choice between for example two c1n1b1 condition type stimuli. That is a bit more unlikely in my case though, because I have waaay more combinations.). 23.11.21 update: we want to create subsets for each compositional dimension (noise, complexity, and bs) where we remove trials of the same dimension. I.e. we don't want to see a choice between two complexity level 2's.
+
+```{r}
+
+# Complexity subset:
+dfa_c <- dfa %>% subset(ComplexityL != ComplexityR)
+
+# Noise subset:
+dfa_n <- dfa %>% subset(NoiseL != NoiseR)
+
+# Blank space subset:
+dfa_b <- dfa %>% subset(BlankSpaceL != BlankSpaceR)
+```
+
+
+Create ‘Distance’ column based on generationL  (xxx so: Create ‘Distance’ column based on ComplexityL, one based on noiseL, and one based on BlankSpaceL, or should I make one single column for all three of them?) 23.11.21 update: in the complexity subset (dfa_c) i make a complexity distance column, and so on.
+
+```{r}
+
+# relevel as factor
+dfa_c$ComplexityL <- factor(dfa_c$ComplexityL, levels = c(1, 2, 3))
+dfa_c$ComplexityR <- factor(dfa_c$ComplexityR, levels = c(1, 2, 3))
+
+dfa_n$NoiseL <- factor(dfa_n$NoiseL, levels = c(1, 2, 3))
+dfa_n$NoiseR <- factor(dfa_n$NoiseR, levels = c(1, 2, 3))
+
+dfa_b$BlankSpaceL <- factor(dfa_b$BlankSpaceL, levels = c(1, 2, 3))
+dfa_b$BlankSpaceR <- factor(dfa_b$BlankSpaceR, levels = c(1, 2, 3))
+
+
+
+# when transformed from leveled factor; becomes 1, 2, and 3. (xxx don't know if this is true/necessary for me when my levels were already 1,2, and 3)
+dfa_c$DistanceC = as.numeric(dfa_c$ComplexityL)
+dfa_n$DistanceN = as.numeric(dfa_n$NoiseL)
+dfa_b$DistanceB = as.numeric(dfa_b$BlankSpaceL)
+
+
+
+# subtract right from left
+dfa_c$DistanceC <- dfa_c$DistanceC - as.numeric(dfa_c$ComplexityR) #xxx
+dfa_n$DistanceN <- dfa_n$DistanceN - as.numeric(dfa_n$NoiseR)      #xxx
+dfa_b$DistanceB <- dfa_b$DistanceB - as.numeric(dfa_b$BlankSpaceR) #xxx make this ordinal
+
+class(dfa_c$DistanceC)
+dfa_c$DistanceC <- ordered(dfa_c$DistanceC)
+dfa_n$DistanceN <- ordered(dfa_n$DistanceN)
+dfa_b$DistanceB <- ordered(dfa_b$DistanceB)
+
+# Change variable before running models
+dfa_c$ResponseL <- as.factor(dfa_c$ResponseL)
+dfa_c$ID <- as.factor(dfa_c$ID)
+
+dfa_n$ResponseL <- as.factor(dfa_n$ResponseL)
+dfa_n$ID <- as.factor(dfa_n$ID)
+
+dfa_b$ResponseL <- as.factor(dfa_b$ResponseL)
+dfa_b$ID <- as.factor(dfa_b$ID)
+
+```
+
+
+
+## Modelling
+
+```{r the Null Model}
+# define chains, iter, and controls
+CHAINS = 2
+CORES = 2
+ITER = 4000   #23.11.21: Kristian suggested 4000 (originally it said 1000)
+
+CONTROLS = list(
+  max_treedepth = 20,
+  adapt_delta=0.99)
+
+### MODEL 0
+
+# Construct models
+a_c_f0 <- bf(ResponseL ~ 1) #  + (1 + distance | ID) + (1 | StimPairID)
+
+
+# get priors to be set
+get_prior(a_c_m0, dfa, family = bernoulli()) #xxx now that I have three different subset df's do i then also have to run three different null models? because they run on different data? or do I just run the null model on the big data?
+
+
+# set priors
+a_c_prior0 <- c(
+  prior(normal(0, 1.5), class = Intercept) #xxx find your own priors, once you get the df up and running. The get_prior just gives me the generic student's t. where do these priors come from?
+)
+
+
+p <- rnorm(10000, 0, 1.5) # p = distribution. xxx Change numbers?
+
+dens(p) # density plot (log odds)
+
+dens(inv_logit(p)) # probabiloity for rate --> this is a nice prior (xxx check on my data). 23.11.21 update: on my data it looks pretty nicely normal/gaussian distributed (I think)
+
+
+
+# Run model based on priors alone
+#a_c_m0_prior <- brm(
+#   a_c_f0,
+#   #data = subset(dfa, ID %in% sub), #xxx not sure about the data to use. why are they using that weird little subset?
+#   data = dfa_c,
+#   family = bernoulli(),
+#   prior = a_c_prior0,
+#   sample_prior = "only"
+#)
+
+# prior predictive check
+#pp_check(a_c_m0_prior, nsamples=100) #is this good? i'm not sure
+
+
+## Better pp_check
+#y_pred <- posterior_linpred(a_c_m0_prior) # generate predictions from the model, but we don't want 0's and 1's , we want which rates are expected
+
+# we want linear predictions before it is linked into log-odds. 
+#dens(inv_logit(y_pred)) # looks at the density now. Almost uniform distribution discounting extremes.
+
+# Run model
+#a_c_m0 <- brm(
+#   a_c_f0,
+#   data = subset(dfa, ID %in% sub),
+#   family = bernoulli(),
+#   prior = prior0,
+#   sample_prior = TRUE
+#)
+
+#summary(a_c_m0)
+
+# prior predictive check
+#pp_check(a_c_m0, nsamples=100)
+
+## Better pp_check
+#y_pred1 <- posterior_linpred(a_c_m0)  
+#dens(inv_logit(y_pred1))
+```
+
+
+ 
+```{r Complexity models}
+
+#the model formulas: 
+#xxx null model ...
+a_c_f1 <- bf(ResponseL ~ 1 + DistanceC + (1 + DistanceC | ID)) #orientation?
+
+
+# get priors to be set
+#xxx null model priors ...
+get_prior(a_c_f1, dfa_c, family = bernoulli())
+
+
+# defining the priors:
+a_c_prior <- c(     
+  prior(normal(0,1.5), class = Intercept),
+  prior(normal(0,0.5), class = b), #This would be increased in order to make the quadratic model post less constrained.
+  prior(normal(0,0.3), class = sd), 
+  prior(lkj(5), class = cor)
+)
+
+# Run prior models
+#xxx null model prior model ...
+
+a_c_m1_prior <- brm(
+   a_c_f1,
+   data = dfa_c,
+   family = bernoulli(),
+   prior = a_c_prior,
+   sample_prior = "only",
+   file = "models/aesthetics/a_c_m1_prior"
+)
+
+
+# prior predictive checks
+#xxx null model prior model pp checks ...
+
+pp_check(a_c_m1_prior, nsamples=100)
+y_pred1 <- posterior_linpred(a_c_m1_prior)  
+dens(inv_logit(y_pred1))
+
+
+# Run models
+# xxx null model ...
+
+a_c_m1 <- brm(          #Model ran very fast and is not at all significant
+   a_c_f1,
+   data = dfa_c,
+   family = bernoulli(),
+   prior = a_c_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_c_m1"
+)
+
+
+# prior predictive checks
+pp_check(a_c_m1, nsamples=100)
+y_pred1 <- posterior_linpred(a_c_m1)  
+dens(inv_logit(y_pred1))
+
+
+## Model results
+
+#model 1
+print(summary(a_c_m1))
+print(marginal_effects(a_c_m1))
+print(hypothesis(a_c_m1, "DistanceC.L > 0", class = "b")) #this is what we hypothesize: that the more complex left is compared to right, the more likely the participant will be to choose left over right. However, we see no significant effects here, actually, we can see that the slope is negative, so we try testing for the opposite effect.
+print(hypothesis(a_c_m1, "DistanceC.Q > 0", class = "b"))
+plot(hypothesis(a_c_m1, "DistanceC.L > 0", class = "b"))
+plot(hypothesis(a_c_m1, "DistanceC.Q > 0", class = "b"))
+
+print(hypothesis(a_c_m1, "DistanceC.L < 0", class = "b"))
+print(hypothesis(a_c_m1, "DistanceC.Q < 0", class = "b"))
+plot(hypothesis(a_c_m1, "DistanceC.L < 0", class = "b")) #the more complex the less aesthetic. the prob of choosing left goes up when it is lower level of complexity than right. DistanceC is a measure of how much higher on complexity Left is than right. This says that when left is mich higher on complexity than right, the probability of choosing left goes down significantly. I.e. people are more likely to choose the less complex image (xxx is this correct?)
+plot(hypothesis(a_c_m1, "DistanceC.Q < 0", class = "b"))
+#plot(a_c_m1) #trace plot
+
+
+#model 2
+#print(summary(a_c_m2))
+#print(marginal_effects(a_c_m2))
+#print(hypothesis(a_c_m2, "DistanceC < 0", class = "b"))
+#plot(hypothesis(a_c_m2, "DistanceC < 0", class = "b"))# this would be fixed by altering sd prior
+```
+
+
+```{r Noise models}
+
+#the model formula: 
+#xxx null model ...
+a_n_f1 <- bf(ResponseL ~ 1 + DistanceN + (1 + DistanceN | ID))
+
+
+# get priors to be set
+#xxx null model priors ...
+get_prior(a_n_f1, dfa_n, family = bernoulli())
+
+
+a_n_prior <- c( 
+  prior(normal(0,1.5), class = Intercept),
+  prior(normal(0,0.5), class = b),
+  prior(normal(0,0.3), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# Run prior models
+#xxx null model prior model ...
+
+a_n_m1_prior <- brm(
+   a_n_f1,
+   data = dfa_n, #subset(d2, ID %in% sub)
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = "only",
+   file = "models/aesthetics/a_n_m1_prior"
+)
+
+
+# prior predictive checks
+#xxx null model prior model pp checks ...
+
+pp_check(a_n_m1_prior, nsamples=100)
+y_pred1 <- posterior_linpred(a_n_m1_prior)  
+dens(inv_logit(y_pred1))
+
+
+# Run model
+# xxx null model ...
+
+a_n_m1 <- brm(
+   a_n_f1,
+   data = dfa_n,
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_n_m1"
+)
+
+
+## Model results
+
+#model 1
+print(summary(a_n_m1))
+print(marginal_effects(a_n_m1))
+print(hypothesis(a_n_m1, "DistanceN.L < 0", class = "b")) #the more noisy the less aesthetic. the prob of choosing left goes up when it is lower level of noise than right.
+print(hypothesis(a_n_m1, "DistanceN.Q < 0", class = "b"))
+plot(hypothesis(a_n_m1, "DistanceN.L < 0", class = "b"))
+plot(hypothesis(a_n_m1, "DistanceN.Q < 0", class = "b"))
+#plot(a_n_m1)
+```
+
+```{r Blank space models}
+
+#the model formulas: 
+#xxx null model ...
+a_b_f1 <- bf(ResponseL ~ 1 + DistanceB + (1 + DistanceB | ID))
+
+
+# get priors to be set
+#xxx null model priors ...
+get_prior(a_b_f1, dfa_b, family = bernoulli())
+
+
+# defining the priors:
+a_b_prior <- c(     
+  prior(normal(0,1.5), class = Intercept),
+  prior(normal(0,0.5), class = b),
+  prior(normal(0,0.3), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# Run prior models
+#xxx null model prior model ...
+
+a_b_m1_prior <- brm(
+   a_b_f1,
+   data = dfa_b, #subset(d2, ID %in% sub)
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = "only",
+   file = "models/aesthetics/a_b_m1_prior"
+)
+
+# prior predictive checks
+#xxx null model prior model pp checks ...
+
+pp_check(a_b_m1_prior, nsamples=100)
+y_pred1 <- posterior_linpred(a_b_m1_prior)  
+dens(inv_logit(y_pred1))
+
+
+# Run models
+# xxx null model ...
+
+a_b_m1 <- brm(    
+   a_b_f1,
+   data = dfa_b,
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_b_m1"
+)
+
+## Model results
+#model 1
+print(summary(a_b_m1))
+print(marginal_effects(a_b_m1))
+print(hypothesis(a_b_m1, "DistanceB.L < 0", class = "b")) #Hyp: the more blank space left has compared to right, the less likely the participant is to choose left over right.
+print(hypothesis(a_b_m1, "DistanceB.Q < 0", class = "b"))
+plot(hypothesis(a_b_m1, "DistanceB.L < 0", class = "b"))
+plot(hypothesis(a_b_m1, "DistanceB.Q < 0", class = "b"))
+
+print(hypothesis(a_b_m1, "DistanceB.L > 0", class = "b")) #results found in the opposite direction: the more blank space left has compared to right, the more likely the participant is to choose left over right.
+print(hypothesis(a_b_m1, "DistanceB.Q > 0", class = "b"))
+plot(hypothesis(a_b_m1, "DistanceB.L > 0", class = "b"))
+plot(hypothesis(a_b_m1, "DistanceB.Q > 0", class = "b"))
+#plot(a_b_m1)
+#model 2
+
+#for raw data plot change responseL to numeric
+```
+
+
+
+# Reporting the best model
+
+```{r}
+
+
+
+# both controlling for problematic pictures and chain group
+
+summary(m2.8)
+
+hypothesis(m2.8, "distance:chainD1 > 0")
+
+
+
+# Relative effect scale, ignore baserate
+
+exp(0.51) #  the odds of selecting the left stimulus increase 67% when the predictor ‘distance’ increases one unit
+
+
+
+#absolute effect, take base rate into account (xxx what is the base rate?)
+
+inv_logit(0.37)
+
+inv_logit(0.37 + 0.51)
+
+inv_logit(0.37 + 0.51) - inv_logit(0.37) # A positive unit change in the predictor elicits a 11.5% increase in probability of choosing the left stimulus
+
+
+
+
+
+# great effect
+
+hypothesis(m2.8,"distance > 0")
+
+
+
+# no effects
+
+hypothesis(m2.8,"chainD1 > 0")
+
+hypothesis(m2.8,"distance:chainD1 > 0")
+
+
+
+# plot results
+
+plot(hypothesis(m2.8,"distance > 0")) # the priors do not seem too sceptical as the data does not try to escape it...
+
+
+
+plot(m2.8)
+
+
+
+conditional_effects(m2.8)
+
+
+
+```
+
+
+## Plots
+
+```{r}
+# Change response L back to numeric
+dfa_c$ResponseL_num <- as.numeric(as.character(dfa_c$ResponseL))
+dfa_n$ResponseL_num <- as.numeric(as.character(dfa_n$ResponseL))
+dfa_b$ResponseL_num <- as.numeric(as.character(dfa_b$ResponseL))
+
+
+# Create summary dataset for visualisation
+plotSum_c <- dfa_c %>% group_by(ID, DistanceC) %>% summarise(
+  LeftChoice = mean(ResponseL_num)
+)
+plotSum_n <- dfa_n %>% group_by(ID, DistanceN) %>% summarise(
+  LeftChoice = mean(ResponseL_num)
+)
+plotSum_b <- dfa_b %>% group_by(ID, DistanceB) %>% summarise(
+  LeftChoice = mean(ResponseL_num)
+)
+
+
+
+
+
+library(pacman)
+
+p_load(extrafont)
+
+font_import(pattern="[T/t]imes")
+
+loadfonts(device="win")
+
+
+
+Exp2_MainPlot <- ggplot(plotSum, aes(DistanceC, LeftChoice)) + 
+
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+
+  geom_smooth(method=lm, color = "red") +
+
+  scale_color_discrete(guide=FALSE) +
+
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
+
+  
+
+  # THEMES
+
+  theme_grey() +
+
+  theme(
+
+    text = element_text(family = "Times New Roman"),
+
+    legend.position="top",
+
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+
+    plot.title=element_text(size=21,face="bold")) +
+
+  labs(title="\nExperiment 2",
+
+       subtitle="Intentionality",
+
+       x=expression("Generation distance from right to left"),
+
+       y=expression("Rate of choosing the left stimulus")) +
+
+  NULL
+
+  
+
+Exp2_MainPlot 
+#individual differences
+```
+
+
+```{r}
+
+
+
+# Change response L back to numeric
+
+dfa_n$ResponseL <- as.numeric(as.character(dfa_n$ResponseL))
+
+
+
+# Create summary dataset for visualisation
+
+plotSum <- dfa_n %>% group_by(ID, DistanceN) %>% summarise(
+
+  LeftChoice = mean(ResponseL)
+
+)
+
+
+
+
+
+Exp2_MainPlot2 <- ggplot(plotSum, aes(DistanceN, LeftChoice)) + 
+
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+
+  geom_smooth(method=lm, color = "red") +
+
+  scale_color_discrete(guide=FALSE) +
+
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
+
+  
+
+  # THEMES
+
+  theme_grey() +
+
+  theme(
+
+    text = element_text(family = "Times New Roman"),
+
+    legend.position="top",
+
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+
+    plot.title=element_text(size=21,face="bold")) +
+
+  labs(title="\nExperiment 2",
+
+       subtitle="Intentionality",
+
+       x=expression("Generation distance from right to left"),
+
+       y=expression("Rate of choosing the left stimulus")) +
+
+  NULL
+
+  
+
+Exp2_MainPlot2
+#individual differences
+```
+
+
+
+```{r}
+
+
+
+# Change response L back to numeric
+
+dfa_b$ResponseL <- as.numeric(as.character(dfa_b$ResponseL))
+
+
+
+# Create summary dataset for visualisation
+
+plotSum <- dfa_b %>% group_by(ID, DistanceB) %>% summarise(
+
+  LeftChoice = mean(ResponseL)
+
+)
+
+
+
+
+
+Exp2_MainPlot3 <- ggplot(plotSum, aes(DistanceB, LeftChoice)) + 
+
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+
+  geom_smooth(method=lm, color = "red") +
+
+  scale_color_discrete(guide=FALSE) +
+
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
+
+  
+
+  # THEMES
+
+  theme_grey() +
+
+  theme(
+
+    text = element_text(family = "Times New Roman"),
+
+    legend.position="top",
+
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+
+    plot.title=element_text(size=21,face="bold")) +
+
+  labs(title="\nExperiment 2",
+
+       subtitle="Intentionality",
+
+       x=expression("Generation distance from right to left"),
+
+       y=expression("Rate of choosing the left stimulus")) +
+
+  NULL
+
+  
+
+Exp2_MainPlot3
+#individual differences
+```
+
+
+
+```{r}
+ggplot(dfa_c, aes(DistanceC, as.numeric(ResponseL))) + 
+  geom_point() +
+  geom_smooth()
+class(dfa_c$DistanceC)
+```
+
+
+
+#

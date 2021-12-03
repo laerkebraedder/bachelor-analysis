@@ -190,11 +190,11 @@ dfa_b$DistanceB = as.numeric(dfa_b$BlankSpaceL)
 
 
 # subtract right from left
-dfa_c$DistanceC <- dfa_c$DistanceC - as.numeric(dfa_c$ComplexityR)
-dfa_n$DistanceN <- dfa_n$DistanceN - as.numeric(dfa_n$NoiseR)
-dfa_b$DistanceB <- dfa_b$DistanceB - as.numeric(dfa_b$BlankSpaceR)
+dfa_c$DistanceC <- dfa_c$DistanceC - as.numeric(dfa_c$ComplexityR) #xxx
+dfa_n$DistanceN <- dfa_n$DistanceN - as.numeric(dfa_n$NoiseR)      #xxx
+dfa_b$DistanceB <- dfa_b$DistanceB - as.numeric(dfa_b$BlankSpaceR) #xxx make this ordinal
 
-
+class(dfa_c$DistanceC)
 
 # Change variable before running models
 
@@ -311,13 +311,13 @@ dens(inv_logit(y_pred1))
 ```
 
 
- xxx Can I also in this analysis get away with only making one model, if I make the compositional dimensions ordered?
+ 
 ```{r Complexity models}
 
 #the model formulas: 
 #xxx null model ...
-a_c_f1 <- bf(ResponseL ~ 1 + DistanceC + (1 + DistanceC | ID) + (1 | StimPair)) #xxx do I really need to have random effects for stimpair? seems maybe a bit silly.. (obs in the original this was stimPairID, which I am not sure what was, but just to note it.)
-a_c_f2 <- bf(ResponseL ~ 1 + DistanceC + I(DistanceC)^2 + (1 + DistanceC + I(DistanceC)^2 | ID) + (1 | StimPair))
+a_c_f1 <- bf(ResponseL ~ 1 + DistanceC + (1 + DistanceC | ID)) #orientation?
+a_c_f2 <- bf(ResponseL ~ 1 + DistanceC + I(DistanceC)^2 + (1 + DistanceC + I(DistanceC)^2 | ID))
 
 
 # get priors to be set
@@ -327,21 +327,12 @@ get_prior(a_c_f2, dfa_c, family = bernoulli())
 
 
 # defining the priors: (xxx are priors supposed to be the same for both models? If yes, then just delete one of these)
-a_c_prior1 <- c(       # xxx find your own priors
+a_c_prior <- c(       # xxx find your own priors
   prior(normal(0,1.5), class = Intercept),
-  prior(normal(0,0.5), class = b),
-  prior(normal(0,0.3), class = sd),
+  prior(normal(0,0.5), class = b), #This would be increased in order to make the quadratic model post less constrained.
+  prior(normal(0,0.3), class = sd), 
   prior(lkj(5), class = cor)
 )
-
-a_c_prior2 <- c(
-  prior(normal(0,1.5), class = Intercept),
-  prior(normal(0,0.3), class = b),
-  prior(normal(0,0.2), class = sd),
-  prior(lkj(5), class = cor)
-)
-
-
 
 # Run prior models
 #xxx null model prior model ...
@@ -350,7 +341,7 @@ a_c_m1_prior <- brm(
    a_c_f1,
    data = dfa_c, #subset(d2, ID %in% sub)
    family = bernoulli(),
-   prior = a_c_prior1,
+   prior = a_c_prior,
    sample_prior = "only"
 )
 
@@ -358,7 +349,7 @@ a_c_m2_prior <- brm(
    a_c_f2,
    data = dfa_c,
    family = bernoulli(),
-   prior = a_c_prior2,
+   prior = a_c_prior,
    sample_prior = "only"
 )
 
@@ -383,7 +374,7 @@ a_c_m1 <- brm(          #Model ran very fast and is not at all significant
    a_c_f1,
    data = dfa_c,
    family = bernoulli(),
-   prior = a_c_prior1,
+   prior = a_c_prior,
    sample_prior = TRUE,
    chains = CHAINS,
    cores=CORES,
@@ -395,7 +386,7 @@ a_c_m2 <- brm(
    a_c_f2,
    data = dfa_c,
    family = bernoulli(),
-   prior = a_c_prior2,
+   prior = a_c_prior,
    sample_prior = TRUE,
    chains = CHAINS,
    cores=CORES,
@@ -405,13 +396,13 @@ a_c_m2 <- brm(
 
 
 # prior predictive checks
-pp_check(a_c_m1, nsamples=100)
-y_pred1 <- posterior_linpred(a_c_m1)  
-dens(inv_logit(y_pred1))
+#pp_check(a_c_m1, nsamples=100)
+#y_pred1 <- posterior_linpred(a_c_m1)  
+#dens(inv_logit(y_pred1))
 
-pp_check(a_c_m2, nsamples=100)
-y_pred1 <- posterior_linpred(a_c_m2)  
-dens(inv_logit(y_pred1))
+#pp_check(a_c_m2, nsamples=100)
+#y_pred1 <- posterior_linpred(a_c_m2)  
+#dens(inv_logit(y_pred1))
 
 
 ## Model results
@@ -447,9 +438,218 @@ plot(hypothesis(a_c_m2,"DistanceC > 0"))
 hypothesis(a_c_m2,"DistanceC > 0")
 
 plot(a_c_m2)
+
+
+#model 1
+print(summary(a_c_m1))
+print(marginal_effects(a_c_m1))
+print(hypothesis(a_c_m1, "DistanceC < 0", class = "b"))
+plot(hypothesis(a_c_m1, "DistanceC < 0", class = "b")) #the more complex the less aesthetic. the prob of choosing left goes up when it is lower level of complexity than right. 
+#model 2
+print(summary(a_c_m2))
+print(marginal_effects(a_c_m2))
+print(hypothesis(a_c_m2, "DistanceC < 0", class = "b"))
+plot(hypothesis(a_c_m2, "DistanceC < 0", class = "b"))# this would be fixed by altering sd prior
 ```
 
+```{r Noise models}
 
+#the model formulas: 
+#xxx null model ...
+a_n_f1 <- bf(ResponseL ~ 1 + DistanceN + (1 + DistanceN | ID)) #orientation?
+a_n_f2 <- bf(ResponseL ~ 1 + DistanceN + I(DistanceN)^2 + (1 + DistanceN + I(DistanceN)^2 | ID))
+
+
+# get priors to be set
+#xxx null model priors ...
+get_prior(a_n_f1, dfa_n, family = bernoulli())
+get_prior(a_n_f2, dfa_n, family = bernoulli())
+
+
+# defining the priors: (xxx are priors supposed to be the same for both models? If yes, then just delete one of these)
+a_n_prior <- c(       # xxx find your own priors
+  prior(normal(0,1.5), class = Intercept),
+  prior(normal(0,0.5), class = b),
+  prior(normal(0,0.3), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# Run prior models
+#xxx null model prior model ...
+
+a_n_m1_prior <- brm(
+   a_n_f1,
+   data = dfa_n, #subset(d2, ID %in% sub)
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = "only"
+)
+
+a_n_m2_prior <- brm(
+   a_n_f2,
+   data = dfa_n,
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = "only"
+)
+
+
+# prior predictive checks
+#xxx null model prior model pp checks ...
+
+pp_check(a_n_m1_prior, nsamples=100)
+y_pred1 <- posterior_linpred(a_n_m1_prior)  
+dens(inv_logit(y_pred1))
+
+pp_check(a_n_m2_prior, nsamples=100)
+y_pred2 <- posterior_linpred(a_n_m2_prior)  
+dens(inv_logit(y_pred2))
+
+
+
+# Run models
+# xxx null model ...
+
+a_n_m1 <- brm(          #Model ran very fast and is not at all significant
+   a_n_f1,
+   data = dfa_n,
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_n_m1"
+)
+
+a_n_m2 <- brm(
+   a_n_f2,
+   data = dfa_n,
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_n_m2"
+)
+
+## Model results
+
+
+
+#model 1
+print(summary(a_n_m1))
+print(marginal_effects(a_n_m1))
+print(hypothesis(a_n_m1, "DistanceN < 0", class = "b"))
+plot(hypothesis(a_n_m1, "DistanceN < 0", class = "b"))
+plot(a_n_m1)
+#model 2
+print(summary(a_n_m2))
+print(marginal_effects(a_n_m2))
+print(hypothesis(a_n_m2, "DistanceN < 0", class = "b"))
+plot(hypothesis(a_n_m2, "DistanceN < 0", class = "b"))
+plot(a_n_m2)
+```
+
+```{r Blank space models}
+
+#the model formulas: 
+#xxx null model ...
+a_b_f1 <- bf(ResponseL ~ 1 + DistanceB + (1 + DistanceB | ID)) #orientation?
+a_b_f2 <- bf(ResponseL ~ 1 + DistanceB + I(DistanceB)^2 + (1 + DistanceB + I(DistanceB)^2 | ID))
+
+
+# get priors to be set
+#xxx null model priors ...
+get_prior(a_b_f1, dfa_b, family = bernoulli())
+get_prior(a_b_f2, dfa_b, family = bernoulli())
+
+
+# defining the priors: (xxx are priors supposed to be the same for both models? If yes, then just delete one of these)
+a_b_prior <- c(       # xxx find your own priors
+  prior(normal(0,1.5), class = Intercept),
+  prior(normal(0,0.5), class = b),
+  prior(normal(0,0.3), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# Run prior models
+#xxx null model prior model ...
+
+a_b_m1_prior <- brm(
+   a_b_f1,
+   data = dfa_b, #subset(d2, ID %in% sub)
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = "only"
+)
+
+a_b_m2_prior <- brm(
+   a_b_f2,
+   data = dfa_b,
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = "only"
+)
+
+
+# prior predictive checks
+#xxx null model prior model pp checks ...
+
+pp_check(a_b_m1_prior, nsamples=100)
+y_pred1 <- posterior_linpred(a_b_m1_prior)  
+dens(inv_logit(y_pred1))
+
+pp_check(a_b_m2_prior, nsamples=100)
+y_pred2 <- posterior_linpred(a_b_m2_prior)  
+dens(inv_logit(y_pred2))
+
+
+
+# Run models
+# xxx null model ...
+
+a_b_m1 <- brm(          #Model ran very fast and is not at all significant
+   a_b_f1,
+   data = dfa_b,
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_b_m1"
+)
+
+a_b_m2 <- brm(
+   a_b_f2,
+   data = dfa_b,
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_b_m2"
+)
+
+## Model results
+#model 1
+print(summary(a_b_m1))
+print(marginal_effects(a_b_m1))
+print(hypothesis(a_b_m1, "DistanceB > 0", class = "b"))
+plot(hypothesis(a_b_m1, "DistanceB > 0", class = "b"))
+plot(a_b_m1)
+#model 2
+print(summary(a_b_m2))
+print(marginal_effects(a_b_m2))
+print(hypothesis(a_b_m2, "DistanceB > 0", class = "b"))
+plot(hypothesis(a_b_m2, "DistanceB > 0", class = "b"))
+plot(a_b_m1)
+
+#for raw data plor change responseL to numeric
+```
 
 
 
@@ -476,9 +676,6 @@ loo_compare(a_c_m1, a_c_m2) # number tries to estimate out of sample error. Bael
 loo_model_weights(a_c_m1, a_c_m2)
 
 ```
-
-
-
 
 
 ## Model comparisons
@@ -612,9 +809,6 @@ summary(m2.8)
 ```
 
 
-
-
-
 # Reporting the best model
 
 ```{r}
@@ -678,9 +872,6 @@ conditional_effects(m2.8)
 ```
 
 
-
-
-
 ## Plots
 
 ```{r}
@@ -689,13 +880,13 @@ conditional_effects(m2.8)
 
 # Change response L back to numeric
 
-d2$ResponseL <- as.numeric(as.character(d2$ResponseL))
+dfa_c$ResponseL <- as.numeric(as.character(dfa_c$ResponseL))
 
 
 
 # Create summary dataset for visualisation
 
-plotSum <- d2 %>% group_by(ID, distance) %>% summarise(
+plotSum <- dfa_c %>% group_by(ID, DistanceC) %>% summarise(
 
   LeftChoice = mean(ResponseL)
 
@@ -715,7 +906,7 @@ loadfonts(device="win")
 
 
 
-Exp2_MainPlot <- ggplot(plotSum, aes(distance, LeftChoice)) + 
+Exp2_MainPlot <- ggplot(plotSum, aes(DistanceC, LeftChoice)) + 
 
   geom_line(aes(group=ID,color=ID),alpha=0.6) +
 
@@ -756,7 +947,368 @@ Exp2_MainPlot <- ggplot(plotSum, aes(distance, LeftChoice)) +
   
 
 Exp2_MainPlot 
+#individual differences
+```
 
+
+```{r}
+
+
+
+# Change response L back to numeric
+
+dfa_n$ResponseL <- as.numeric(as.character(dfa_n$ResponseL))
+
+
+
+# Create summary dataset for visualisation
+
+plotSum <- dfa_n %>% group_by(ID, DistanceN) %>% summarise(
+
+  LeftChoice = mean(ResponseL)
+
+)
+
+
+
+
+
+Exp2_MainPlot2 <- ggplot(plotSum, aes(DistanceN, LeftChoice)) + 
+
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+
+  geom_smooth(method=lm, color = "red") +
+
+  scale_color_discrete(guide=FALSE) +
+
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
+
+  
+
+  # THEMES
+
+  theme_grey() +
+
+  theme(
+
+    text = element_text(family = "Times New Roman"),
+
+    legend.position="top",
+
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+
+    plot.title=element_text(size=21,face="bold")) +
+
+  labs(title="\nExperiment 2",
+
+       subtitle="Intentionality",
+
+       x=expression("Generation distance from right to left"),
+
+       y=expression("Rate of choosing the left stimulus")) +
+
+  NULL
+
+  
+
+Exp2_MainPlot2
+#individual differences
+```
+
+
+
+```{r}
+
+
+
+# Change response L back to numeric
+
+dfa_b$ResponseL <- as.numeric(as.character(dfa_b$ResponseL))
+
+
+
+# Create summary dataset for visualisation
+
+plotSum <- dfa_b %>% group_by(ID, DistanceB) %>% summarise(
+
+  LeftChoice = mean(ResponseL)
+
+)
+
+
+
+
+
+Exp2_MainPlot3 <- ggplot(plotSum, aes(DistanceB, LeftChoice)) + 
+
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+
+  geom_smooth(method=lm, color = "red") +
+
+  scale_color_discrete(guide=FALSE) +
+
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
+
+  
+
+  # THEMES
+
+  theme_grey() +
+
+  theme(
+
+    text = element_text(family = "Times New Roman"),
+
+    legend.position="top",
+
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+
+    plot.title=element_text(size=21,face="bold")) +
+
+  labs(title="\nExperiment 2",
+
+       subtitle="Intentionality",
+
+       x=expression("Generation distance from right to left"),
+
+       y=expression("Rate of choosing the left stimulus")) +
+
+  NULL
+
+  
+
+Exp2_MainPlot3
+#individual differences
+```
+
+
+
+```{r}
+ggplot(dfa_c, aes(DistanceC, as.numeric(ResponseL))) + 
+  geom_point() +
+  geom_smooth()
+class(dfa_c$DistanceC)
+```
+
+
+
+# running all remaining models
+```{r Delete this - models have been copy pasted}
+a_n_f1 <- bf(ResponseL ~ 1 + DistanceN + (1 + DistanceN | ID))
+a_n_f2 <- bf(ResponseL ~ 1 + DistanceN + I(DistanceN)^2 + (1 + DistanceN + I(DistanceN)^2 | ID))
+a_b_f1 <- bf(ResponseL ~ 1 + DistanceB + (1 + DistanceB | ID))
+a_b_f2 <- bf(ResponseL ~ 1 + DistanceB + I(DistanceB)^2 + (1 + DistanceB + I(DistanceB)^2 | ID))
+
+
+a_n_prior <- c(
+  prior(normal(0,1.5), class = Intercept),
+  prior(normal(0,0.5), class = b),
+  prior(normal(0,0.3), class = sd),
+  prior(lkj(5), class = cor)
+)
+a_b_prior <- c(
+  prior(normal(0,1.5), class = Intercept),
+  prior(normal(0,0.5), class = b),
+  prior(normal(0,0.3), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+a_n_m1 <- brm(
+   a_n_f1,
+   data = dfa_n,
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_n_m1"
+)
+a_n_m2 <- brm(
+   a_n_f2,
+   data = dfa_n,
+   family = bernoulli(),
+   prior = a_n_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_n_m2"
+)
+a_b_m1 <- brm(    
+   a_b_f1,
+   data = dfa_b,
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_b_m1"
+)
+a_b_m2 <- brm(
+   a_b_f2,
+   data = dfa_b,
+   family = bernoulli(),
+   prior = a_b_prior,
+   sample_prior = TRUE,
+   chains = CHAINS,
+   cores=CORES,
+   iter = ITER,
+   file = "models/aesthetics/a_b_m2"
+)
+######################################################
+
+m_n_f1 <- bf(MSE_1 ~ 1 + Noise_numeric + (1 + Noise_numeric | ID) + (1 | Stimulus) + (1 | Orientation))
+m_n_f1_q <- bf(MSE_1 ~ 1 + Noise_numeric + I(Noise_numeric)^2 
+               (1 + Noise_numeric + I(Noise_numeric)^2 | ID) + 
+                 (1 | Stimulus) + 
+                 (1 | Orientation))
+
+m_n_f2 <- bf(MSE_1 ~ 1 + Noise_ordered + (1 + Noise_ordered | ID) + (1 | Stimulus) + (1 | Orientation)) 
+m_n_f2.1 <- bf(MSE_1 ~ 1 + Noise_ordered + (1 + Noise_ordered | ID) + (1 | Stimulus)) 
+m_n_f2.2 <- bf(MSE_1 ~ 1 + Noise_ordered * Orientation + (1 + Noise_ordered | ID) + (1 | Stimulus)) 
+
+m_n_prior1 <- c(
+  prior(normal(0,.3), class = Intercept),
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# model
+m_n_m1 <- brm(m_n_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_n_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m1"
+             )
+
+m_n_m1_q <- brm(m_n_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_n_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m1_q"
+             )
+
+m_n_m2 <- brm(m_n_f2,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m2"
+             )
+
+m_n_m2.1 <- brm(m_n_f2.1,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m2.1"
+             )
+
+m_n_m2.2 <- brm(m_n_f2.2,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m2.2"
+             )
+
+#########################################
+m_b_f1 <- bf(MSE_1 ~ 1 + BlankSpace_numeric + (1 + BlankSpace_numeric | ID) + (1 | Stimulus) + (1 | Orientation))
+m_b_f1_q <- bf(MSE_1 ~ 1 + BlankSpace_numeric + I(BlankSpace_numeric)^2 
+               (1 + BlankSpace_numeric + I(BlankSpace_numeric)^2 | ID) + 
+                 (1 | Stimulus) + 
+                 (1 | Orientation))
+
+m_b_f2 <- bf(MSE_1 ~ 1 + BlankSpace_ordered + (1 + BlankSpace_ordered | ID) + (1 | Stimulus) + (1 | Orientation)) 
+m_b_f2.1 <- bf(MSE_1 ~ 1 + BlankSpace_ordered + (1 + BlankSpace_ordered | ID) + (1 | Stimulus)) 
+m_b_f2.2 <- bf(MSE_1 ~ 1 + BlankSpace_ordered * Orientation + (1 + BlankSpace_ordered | ID) + (1 | Stimulus)) 
+
+m_b_prior1 <- c(
+  prior(normal(0,.3), class = Intercept),
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+# model
+m_b_m1 <- brm(m_b_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m1"
+             )
+
+m_b_m1_q <- brm(m_b_f1,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m1_q"
+             )
+
+m_b_m2 <- brm(m_b_f2,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m2"
+             )
+
+m_b_m2.1 <- brm(m_b_f2.1,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m2.1"
+             )
+
+m_b_m2.2 <- brm(m_b_f2.2,
+             data = dfm,
+             family = gaussian,
+             prior = m_b_prior1,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m2.2"
+             )
 ```
 
 
