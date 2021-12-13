@@ -69,8 +69,12 @@ dfm$BlankSpace <- ordered(dfm$BlankSpace)
 
 # Transform MSE so that it is on a 0-1 scale - xxx should I?
 dfm$MSE_1 = dfm$MSE - min(dfm$MSE)
-dfm$MSE_1 = dfm$MSE / max(dfm$MSE)
+dfm$MSE_1 = dfm$MSE_1 / max(dfm$MSE)
 
+
+
+mean(table(dfm$Stimulus))
+min(table(dfm$Stimulus))# Each stimulus appears an average of 15 times, and no Stimulus is showed less than 11 times. This is backing for using Stimulus as random intercept to account for repeated measures.
 ```
 
 ## Run analyses
@@ -119,7 +123,7 @@ f1 <- bf(MSE ~ 1 + Complexity)
 # 1. Numeric vs ordered models. Transformed MSE (option 1)
 ```{r ordered - complexity}
 #!!! is the orientation error due to the crop from rectangular to quadratic? Maybe just ignore it? bring it up in the discussion briefly. beyond the scope of this study. Interaction model could be made and compared to the pure complexity model.
-m_c_f2.1 <- bf(MSE_1 ~ 1 + Complexity + (1 + Complexity | ID)) # <- This is probably the one:))
+m_c_f2.1 <- bf(MSE_1 ~ 1 + Complexity + (1 + Complexity | ID) + (1 | Stimulus))
 
 get_prior(m_c_f2.1, dfm)
 
@@ -143,11 +147,11 @@ m_c_m2.1_prior <- brm(m_c_f2.1,
              )
 
 
+
 # prior predictive check
 pp_check(m_c_m2.1_prior, nsamples=30) #the dark blue line has a very high peak compares to the samples. xxx
 y_pred_c_m2.1 <- posterior_linpred(m_c_m2.1_prior)
-dens(inv_logit(y_pred_c_m2.1)) # looks at the density now. Almost uniform distribution discounting extremes. (xxx ???)
-
+dens(inv_logit(y_pred_c_m2.1))
 
 # Real model
 m_c_m2.1 <- brm(m_c_f2.1,
@@ -167,13 +171,15 @@ print(hypothesis(m_c_m2.1, "Complexity.L > 0", class = "b"))
 print(hypothesis(m_c_m2.1, "Complexity.Q > 0", class = "b"))
 plot(hypothesis(m_c_m2.1, "Complexity.L > 0", class = "b"))
 plot(hypothesis(m_c_m2.1, "Complexity.Q > 0", class = "b"))
+
+aggregate(dfm$MSE, list(dfm$Complexity), FUN=mean) 
 ```
 
 
 
 # Noise
 ```{r Noise models}
-m_n_f2.1 <- bf(MSE_1 ~ 1 + Noise + (1 + Noise | ID)) 
+m_n_f2.1 <- bf(MSE_1 ~ 1 + Noise + (1 + Noise | ID) + (1 | Stimulus)) 
 
 # model
 m_n_m2.1 <- brm(m_n_f2.1,
@@ -194,12 +200,15 @@ print(hypothesis(m_n_m2.1, "Noise.Q > 0", class = "b"))
 plot(hypothesis(m_n_m2.1, "Noise.L > 0", class = "b"))
 plot(hypothesis(m_n_m2.1, "Noise.Q > 0", class = "b"))
 
+print(hypothesis(m_n_m2.1, "Noise.L < 0", class = "b"))
+
+aggregate(dfm$MSE, list(dfm$Noise), FUN=mean) 
 ```
 
 
 # Blank Space
 ```{r Blank Space models}
-m_b_f2.1 <- bf(MSE_1 ~ 1 + BlankSpace + (1 + BlankSpace | ID))
+m_b_f2.1 <- bf(MSE_1 ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1 | Stimulus))
 
 
 # model
@@ -229,28 +238,12 @@ print(hypothesis(m_b_m2.1, "BlankSpace.Q > 0", class = "b"))
 plot(hypothesis(m_b_m2.1, "BlankSpace.L > 0", class = "b"))
 plot(hypothesis(m_b_m2.1, "BlankSpace.Q > 0", class = "b"))
 
+aggregate(dfm$MSE, list(dfm$BlankSpace), FUN=mean) 
 ```
 
 
 
 
-
-## Report the winning model
-```{r}
-# Model comparison
-compare_ic(MSE_m1, MSE_m2,ic="loo")
-model_weights(MSE_m1, MSE_m2,ic="loo")
-
-# Summarizing and visualizing results
-summary(MSE_m1)
-hypothesis(MSE_m1,"PeriodL<0")
-marginal_effects(MSE_m1)
-
-pp_check(MSE_m1,nsamples=100)
-
-
-
-```
 
 
 ## Plots
@@ -323,6 +316,163 @@ ggplot(dfm, aes(BlankSpace, MSE, color = Orientation)) +
   geom_point() +
   geom_smooth(method = lm)
 ```
+
+
+
+```{r plots lærke}
+class(dfm$MSE)
+
+dfm$Complexity_num <- as.numeric(dfm$Complexity)
+dfm$Noise_num <- as.numeric(dfm$Noise)
+dfm$BlankSpace_num <- as.numeric(dfm$BlankSpace)
+
+
+# Create summary dataset for visualisation
+exp3_plotSum_c <- dfm %>% group_by(ID, Complexity_num) %>% summarise(
+  MSE_sum = mean(MSE)
+)
+exp3_plotSum_n <- dfm %>% group_by(ID, Noise_num) %>% summarise(
+  MSE_sum = mean(MSE)
+)
+exp3_plotSum_b <- dfm %>% group_by(ID, BlankSpace_num) %>% summarise(
+  MSE_sum = mean(MSE)
+)
+
+
+Exp3_MainPlot_c <- ggplot(exp3_plotSum_c, aes(Complexity_num, MSE_sum)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1, 2, 3),labels=c("Low", "Medium", "High")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 3",
+       subtitle="Memorability",
+       x=expression("Complexity level"),
+       y=expression("MSE")) +
+  NULL
+
+Exp3_MainPlot_n <- ggplot(exp3_plotSum_n, aes(Noise_num, MSE_sum)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1, 2, 3),labels=c("Low", "Medium", "High")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 3",
+       subtitle="Memorability",
+       x=expression("Noise level"),
+       y=expression("MSE")) +
+  NULL
+
+Exp3_MainPlot_b <- ggplot(exp3_plotSum_b, aes(BlankSpace_num, MSE_sum)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1, 2, 3),labels=c("Low", "Medium", "High")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 3",
+       subtitle="Memorability",
+       x=expression("Blank space level"),
+       y=expression("MSE")) +
+  NULL
+
+  
+Exp1_MainPlot_c +
+  Exp1_MainPlot_n + 
+  Exp1_MainPlot_b
+
+Exp2_MainPlot_c +
+  Exp2_MainPlot_n + 
+  Exp2_MainPlot_b
+
+Exp3_MainPlot_c +
+  Exp3_MainPlot_n + 
+  Exp3_MainPlot_b
+
+```
+
+
+
+
+
+
+```{r}
+class(dfm$Orientation)
+m_c_f3 <- bf(MSE_1 ~ 1 + Complexity:Orientation + (1 + Complexity | ID) + (1 | Stimulus))
+
+get_prior(m_c_f3, dfm)
+
+m_c_prior3 <- c(
+  prior(normal(0,.3), class = Intercept),   #xxx are these priors wrong? because in the pp_check it seems that the samples are centered around 0, but the dark blue line is not..?
+  prior(normal(0,.1), class = b),
+  prior(normal(0,.05), class = sd),
+  prior(lkj(5), class = cor)
+)
+
+#Prior model
+m_c_m3_prior <- brm(m_c_f3,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior3,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_c_m3_prior"
+             )
+
+
+
+# prior predictive check
+pp_check(m_c_m3_prior, nsamples=30)
+y_pred_c_m3 <- posterior_linpred(m_c_m3_prior)
+dens(inv_logit(y_pred_c_m3))
+
+# Real model
+m_c_m3 <- brm(m_c_f3,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior3,
+             sample_prior = TRUE,
+                   chains = CHAINS,cores=CHAINS,
+                   iter = ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_c_m3"
+             )
+
+print(summary(m_c_m3))
+print(marginal_effects(m_c_m2.1))
+print(hypothesis(m_c_m2.1, "Complexity.L > 0", class = "b"))
+print(hypothesis(m_c_m2.1, "Complexity.Q > 0", class = "b"))
+plot(hypothesis(m_c_m2.1, "Complexity.L > 0", class = "b"))
+plot(hypothesis(m_c_m2.1, "Complexity.Q > 0", class = "b"))
+
+aggregate(dfm$MSE, list(dfm$Complexity), FUN=mean) 
+```
+
+
+```
+
 
 
 

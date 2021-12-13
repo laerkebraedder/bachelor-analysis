@@ -45,6 +45,9 @@ dfs$BlankSpace <- ordered(dfs$BlankSpace)
 ## dC <- subset(d,Correct==1)
 ## dC$RT1 <- dC$RT/max(dC$RT)
 
+
+mean(table(dfs$Stimulus))
+min(table(dfs$Stimulus))# Each stimulus appears an average of 80.5 times, and no Stimulus is showed less than 79 times. This is backing for using Stimulus as random intercept to account for repeated measures.
 ```
 
 
@@ -134,7 +137,7 @@ models:
 
 # Models with and without random effects for orientation. These do not have standardized outcome variables. They have ordinal predictor variables. (i.e. they are the same as the models in the chunk above, except they have the original outcome variable scale)
 ```{r complexity}
-s_c_f1.1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID)) #!!! Don't need random effects for orientation in order to keep it simple. !!! this is an assumption, that we can make observations across orientations. Maybe have it as a fixed effect interaction even? How does orientation modulate complexity? if this is non significant then all is good. xxx Update: Kristian wrote that orientation does seem to have an effect, so we might wanna add it. xxx Probably don't need random effects for stimulus either, since it is not repeated measures on stimulus.
+s_c_f1.1 <- bf(RT ~ 1 + Complexity + (1 + Complexity | ID) + (1 | Stimulus)) #!!! Don't need random effects for orientation in order to keep it simple. !!! this is an assumption, that we can make observations across orientations. Maybe have it as a fixed effect interaction even? How does orientation modulate complexity? if this is non significant then all is good. xxx Update: Kristian wrote that orientation does seem to have an effect, so we might wanna add it. xxx Probably don't need random effects for stimulus either, since it is not repeated measures on stimulus.
 
 s_c_prior <- c(
            prior(normal(0, .3), class = Intercept), #xxx haven't checked the priors. These are the same as in the complexity models.
@@ -186,7 +189,7 @@ aggregate(dfs$RT, list(dfs$Complexity), FUN=mean)
 
 # Model without random effects for orientation. This does not have standardized outcome variable. It does have ordinal predictor variable.
 ```{r noise}
-s_n_f1.1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID))
+s_n_f1.1 <- bf(RT ~ 1 + Noise + (1 + Noise | ID) + (1 | Stimulus))
 
 s_n_prior <- c(
            prior(normal(0, .3), class = Intercept),
@@ -234,7 +237,7 @@ aggregate(dfs$RT, list(dfs$Noise), FUN=mean)
 
 
 ```{r Blank Space}
-s_b_f1.1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID))
+s_b_f1.1 <- bf(RT ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1 | Stimulus))
 
 s_b_prior <- c(
            prior(normal(0, .3), class = Intercept),
@@ -316,11 +319,117 @@ s_BPlot <- ggplot(subset(dfs_agg, mRT_log > 0), aes(BlankSpace, mRT)) +
 
 library(patchwork)
 s_CPlot +
+  ggtitle("Experiment 1: Saliency") +
   s_NPlot +
-  s_BPlot
+  ggtitle("Experiment 1: Saliency") +
+  s_BPlot +
+  ggtitle("Experiment 1: Saliency")
 
 #ggsave("Plots/s_CPlot.svg", plot = s_CPlot)
 
 ```
+
+
+```{r}
+
+class(dfs$RT)
+
+dfs$Complexity_num <- as.numeric(dfs$Complexity)
+dfs$Noise_num <- as.numeric(dfs$Noise)
+dfs$BlankSpace_num <- as.numeric(dfs$BlankSpace)
+
+
+# Create summary dataset for visualisation
+exp1_plotSum_c <- dfs %>% group_by(ID, Complexity_num) %>% summarise(
+  rt_sum = mean(RT)
+)
+exp1_plotSum_n <- dfs %>% group_by(ID, Noise_num) %>% summarise(
+  rt_sum = mean(RT)
+)
+exp1_plotSum_b <- dfs %>% group_by(ID, BlankSpace_num) %>% summarise(
+  rt_sum = mean(RT)
+)
+
+
+
+#library(pacman)
+
+#p_load(extrafont)
+
+#font_import(pattern="[T/t]imes")
+
+#loadfonts(device="win")
+
+
+
+Exp1_MainPlot_c <- ggplot(exp1_plotSum_c, aes(Complexity_num, rt_sum)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1, 2, 3),labels=c("Low", "Medium", "High")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 1",
+       subtitle="Saliency",
+       x=expression("Complexity level"),
+       y=expression("Reaction time")) +
+  NULL
+
+Exp1_MainPlot_n <- ggplot(exp1_plotSum_n, aes(Noise_num, rt_sum)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1, 2, 3),labels=c("Low", "Medium", "High")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 1",
+       subtitle="Saliency",
+       x=expression("Noise level"),
+       y=expression("Reaction time")) +
+  NULL
+
+Exp1_MainPlot_b <- ggplot(exp1_plotSum_b, aes(BlankSpace_num, rt_sum)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(1, 2, 3),labels=c("Low", "Medium", "High")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 1",
+       subtitle="Saliency",
+       x=expression("Blank space level"),
+       y=expression("Reaction time")) +
+  NULL
+
+  
+
+Exp1_MainPlot_c +
+  Exp1_MainPlot_n + 
+  Exp1_MainPlot_b
+
+```
+
+
+
+
+
 
 

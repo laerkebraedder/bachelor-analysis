@@ -59,6 +59,7 @@ dfa <- dfa %>%    # xxx decide whether or not to have capital first letters
     BlankSpaceR= as.factor(BlankSpaceR),
     OreintationL = as.factor(OrientationL),
     OreintationR = as.factor(OrientationR),
+    StimPair = as.factor(paste0(StimulusL, StimulusR)),
     reaction_time = reaction_time
   )
 
@@ -82,7 +83,6 @@ dfa <- read_csv("data/exp2_dfa.csv")
 
 
 
-Create stimPair column (look in one of the other scripts)
 
 Remove trials of same generation forced choice (xxx Generation must mean period. So in my case, I don't want forced choice between for example two c1n1b1 condition type stimuli. That is a bit more unlikely in my case though, because I have waaay more combinations.). 23.11.21 update: we want to create subsets for each compositional dimension (noise, complexity, and bs) where we remove trials of the same dimension. I.e. we don't want to see a choice between two complexity level 2's.
 
@@ -142,6 +142,15 @@ dfa_n$ID <- as.factor(dfa_n$ID)
 dfa_b$ResponseL <- as.factor(dfa_b$ResponseL)
 dfa_b$ID <- as.factor(dfa_b$ID)
 
+
+
+mean(table(dfa$StimPair))
+min(table(dfa$StimPair))# Each stimulus appears an average of 6.5 times, however, the min number of times that a stimPair is shown is 1 time, so
+table <- as.data.frame(table(dfa$StimPair))
+sum(table$Freq < 5)
+
+( 349 + 12795 + 9100 + 3473 + 5689 ) / 2400
+( 9100 ) / 2400
 ```
 
 
@@ -302,6 +311,9 @@ plot(hypothesis(a_c_m1, "DistanceC.L < 0", class = "b")) #the more complex the l
 plot(hypothesis(a_c_m1, "DistanceC.Q < 0", class = "b"))
 #plot(a_c_m1) #trace plot
 
+print(marginal_effects(a_c_m1))
+dfa1 <- conditional_effects(a_c_m1, effects = "DistanceC")[[1]]
+dfa1
 
 #model 2
 #print(summary(a_c_m2))
@@ -377,6 +389,9 @@ print(hypothesis(a_n_m1, "DistanceN.Q < 0", class = "b"))
 plot(hypothesis(a_n_m1, "DistanceN.L < 0", class = "b"))
 plot(hypothesis(a_n_m1, "DistanceN.Q < 0", class = "b"))
 #plot(a_n_m1)
+
+dfa2 <- conditional_effects(a_n_m1, effects = "DistanceN")[[1]]
+dfa2
 ```
 
 ```{r Blank space models}
@@ -451,6 +466,9 @@ plot(hypothesis(a_b_m1, "DistanceB.Q > 0", class = "b"))
 #model 2
 
 #for raw data plot change responseL to numeric
+
+dfa3 <- conditional_effects(a_b_m1, effects = "DistanceB")[[1]]
+dfa3
 ```
 
 
@@ -518,6 +536,8 @@ conditional_effects(m2.8)
 ```
 
 
+
+
 ## Plots
 
 ```{r}
@@ -526,219 +546,102 @@ dfa_c$ResponseL_num <- as.numeric(as.character(dfa_c$ResponseL))
 dfa_n$ResponseL_num <- as.numeric(as.character(dfa_n$ResponseL))
 dfa_b$ResponseL_num <- as.numeric(as.character(dfa_b$ResponseL))
 
+dfa_c$DistanceC_num <- as.numeric(dfa_c$DistanceC)
+dfa_n$DistanceN_num <- as.numeric(dfa_n$DistanceN)
+dfa_b$DistanceB_num <- as.numeric(dfa_b$DistanceB)
+
 
 # Create summary dataset for visualisation
-plotSum_c <- dfa_c %>% group_by(ID, DistanceC) %>% summarise(
+plotSum_c <- dfa_c %>% group_by(ID, DistanceC_num) %>% summarise(
   LeftChoice = mean(ResponseL_num)
 )
-plotSum_n <- dfa_n %>% group_by(ID, DistanceN) %>% summarise(
+plotSum_n <- dfa_n %>% group_by(ID, DistanceN_num) %>% summarise(
   LeftChoice = mean(ResponseL_num)
 )
-plotSum_b <- dfa_b %>% group_by(ID, DistanceB) %>% summarise(
+plotSum_b <- dfa_b %>% group_by(ID, DistanceB_num) %>% summarise(
   LeftChoice = mean(ResponseL_num)
 )
 
 
 
+#library(pacman)
 
+#p_load(extrafont)
 
-library(pacman)
+#font_import(pattern="[T/t]imes")
 
-p_load(extrafont)
-
-font_import(pattern="[T/t]imes")
-
-loadfonts(device="win")
+#loadfonts(device="win")
 
 
 
-Exp2_MainPlot <- ggplot(plotSum, aes(DistanceC, LeftChoice)) + 
-
+Exp2_MainPlot_c <- ggplot(plotSum_c, aes(DistanceC_num, LeftChoice)) + 
   geom_line(aes(group=ID,color=ID),alpha=0.6) +
-
   geom_point(aes(group=ID,color=ID),alpha=0.6)+
-
   geom_smooth(method=lm, color = "red") +
-
   scale_color_discrete(guide=FALSE) +
-
   scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
-
-  
-
   # THEMES
-
   theme_grey() +
-
   theme(
-
     text = element_text(family = "Times New Roman"),
-
     legend.position="top",
-
     plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
-
     plot.title=element_text(size=21,face="bold")) +
-
   labs(title="\nExperiment 2",
-
-       subtitle="Intentionality",
-
-       x=expression("Generation distance from right to left"),
-
+       subtitle="Aesthetics",
+       x=expression("Complexity distance"),
        y=expression("Rate of choosing the left stimulus")) +
+  NULL
 
+Exp2_MainPlot_n <- ggplot(plotSum_n, aes(DistanceN_num, LeftChoice)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 2",
+       subtitle="Aesthetics",
+       x=expression("Noise distance"),
+       y=expression("Rate of choosing the left stimulus")) +
+  NULL
+
+Exp2_MainPlot_b <- ggplot(plotSum_b, aes(DistanceB_num, LeftChoice)) + 
+  geom_line(aes(group=ID,color=ID),alpha=0.6) +
+  geom_point(aes(group=ID,color=ID),alpha=0.6)+
+  geom_smooth(method=lm, color = "red") +
+  scale_color_discrete(guide=FALSE) +
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
+  # THEMES
+  theme_grey() +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    legend.position="top",
+    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
+    plot.title=element_text(size=21,face="bold")) +
+  labs(title="\nExperiment 2",
+       subtitle="Aesthetics",
+       x=expression("Blank space distance"),
+       y=expression("Rate of choosing the left stimulus")) +
   NULL
 
   
 
-Exp2_MainPlot 
+Exp2_MainPlot_c +
+  Exp2_MainPlot_n + 
+  Exp2_MainPlot_b
 #individual differences
-```
 
-
-```{r}
-
-
-
-# Change response L back to numeric
-
-dfa_n$ResponseL <- as.numeric(as.character(dfa_n$ResponseL))
-
-
-
-# Create summary dataset for visualisation
-
-plotSum <- dfa_n %>% group_by(ID, DistanceN) %>% summarise(
-
-  LeftChoice = mean(ResponseL)
-
-)
-
-
-
-
-
-Exp2_MainPlot2 <- ggplot(plotSum, aes(DistanceN, LeftChoice)) + 
-
-  geom_line(aes(group=ID,color=ID),alpha=0.6) +
-
-  geom_point(aes(group=ID,color=ID),alpha=0.6)+
-
-  geom_smooth(method=lm, color = "red") +
-
-  scale_color_discrete(guide=FALSE) +
-
-  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
-
-  
-
-  # THEMES
-
-  theme_grey() +
-
-  theme(
-
-    text = element_text(family = "Times New Roman"),
-
-    legend.position="top",
-
-    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
-
-    plot.title=element_text(size=21,face="bold")) +
-
-  labs(title="\nExperiment 2",
-
-       subtitle="Intentionality",
-
-       x=expression("Generation distance from right to left"),
-
-       y=expression("Rate of choosing the left stimulus")) +
-
-  NULL
-
-  
-
-Exp2_MainPlot2
-#individual differences
 ```
 
 
 
-```{r}
-
-
-
-# Change response L back to numeric
-
-dfa_b$ResponseL <- as.numeric(as.character(dfa_b$ResponseL))
-
-
-
-# Create summary dataset for visualisation
-
-plotSum <- dfa_b %>% group_by(ID, DistanceB) %>% summarise(
-
-  LeftChoice = mean(ResponseL)
-
-)
-
-
-
-
-
-Exp2_MainPlot3 <- ggplot(plotSum, aes(DistanceB, LeftChoice)) + 
-
-  geom_line(aes(group=ID,color=ID),alpha=0.6) +
-
-  geom_point(aes(group=ID,color=ID),alpha=0.6)+
-
-  geom_smooth(method=lm, color = "red") +
-
-  scale_color_discrete(guide=FALSE) +
-
-  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2),labels=c("-2","-1", "", "1", "2")) +
-
-  
-
-  # THEMES
-
-  theme_grey() +
-
-  theme(
-
-    text = element_text(family = "Times New Roman"),
-
-    legend.position="top",
-
-    plot.subtitle=element_text(face="italic",size=14,colour="grey40"),
-
-    plot.title=element_text(size=21,face="bold")) +
-
-  labs(title="\nExperiment 2",
-
-       subtitle="Intentionality",
-
-       x=expression("Generation distance from right to left"),
-
-       y=expression("Rate of choosing the left stimulus")) +
-
-  NULL
-
-  
-
-Exp2_MainPlot3
-#individual differences
-```
-
-
-
-```{r}
-ggplot(dfa_c, aes(DistanceC, as.numeric(ResponseL))) + 
-  geom_point() +
-  geom_smooth()
-class(dfa_c$DistanceC)
-```
 
 
 
