@@ -29,7 +29,7 @@ dfs <- do.call(rbind, lapply(filePaths1, read.csv))
 dfs <- dfs %>% rename(RT = Reaction_time) #Renaming the reaction time variable to RT
 dfs <- subset(dfs, RT > 0.2) # Removing impossibly fast rt's.
 dfs$Correct <- as.factor(dfs$Correctness) #Creating a new column for correctness where it is a factor. The factor column is named 'Correct'
-dfs <- subset(dfs,!is.na(Correct)) #Removing incorrect responses from the df. xxx what is actually happening here?
+dfs <- subset(dfs,dfs$Correct == 1) #Removing incorrect responses from the df. xxx what is actually happening here?     = the incorrect ones are 0, not NA
 dfs$ID <- as.factor(dfs$ID)
 
 dfs <- subset(dfs, ID != 014)
@@ -38,12 +38,6 @@ dfs <- subset(dfs, ID != 017)
 dfs$Complexity <- ordered(dfs$Complexity) 
 dfs$Noise <- ordered(dfs$Noise)
 dfs$BlankSpace <- ordered(dfs$BlankSpace)
-
-
-# xxx I am not sure what this, from the original script, does:
-## d$PeriodL <- d$PeriodL - 2
-## dC <- subset(d,Correct==1)
-## dC$RT1 <- dC$RT/max(dC$RT)
 
 
 mean(table(dfs$Stimulus))

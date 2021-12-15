@@ -1,19 +1,13 @@
 ---
 title: "Experiment3_Memorability"
-author: "RF"
-date: "8/16/2018"
+author: "Lærke Brædder"
+date: "04/01/2022"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
-About data cleaning:
-- If we need to combine the logfiles and the imageSimilarity data, then we would have to pair them based on participant ID and stim. So, the logfile column ID needs to match the similarity column ID, and the logfile column Stimulus needs to match the similarity column Master (possibly the screenshot column also needs to match the copy column).
-1) Rename "master" to "stimulus".
-2) cbind the two df's (make sure to have same number of observations).
-3) Remove outliers (at least images that are completely white where the participant clicked before they got to reproduce the pattern).
 
 
 
@@ -22,26 +16,28 @@ About data cleaning:
 ```{r cars}
 pacman::p_load(tidyverse,brms,ggbeeswarm)
 
-#######################################################
+# Loading all the logfiles
 filePaths3 <- list.files("data/logfiles-memorability/", "\\.csv$", full.names = TRUE)
 logfiles <- do.call(rbind, lapply(filePaths3, read.csv))
+# Loading all the image similarity data
 imgSim <- read_csv("data/ImageSimilarityData.csv")
-# Logfile 40 is excluded, because it for some reason is not in the imgSim data.
 
+# Renaming the columns to match the logfiles
 imgSim <- imgSim %>% rename(
   Stimulus = drawing,
   TimeStamp = time
 )
 
-table(imgSim$ID)     #All id's in the imgSim data have one more observation. Perhaps the practice trial was screenshotted as well?
-table(logfiles$ID)
+table(imgSim$ID)
+table(logfiles$ID) #All id's in the imgSim data have one more observation. Probably the practice trial was screenshotted as well in these.
 
-# Now, after Kristian remade the MSR values, they have been dublicated, so we have to remove the reoccuring rows of copy name
+# After the MSR values have been recalculated, they have been dublicated in the data frame, so we have to remove the reoccuring rows of copy name
 imgSim <- imgSim[!duplicated(imgSim$copy),]
 
 class(logfiles$ID)
-imgSim$ID <- as.integer(imgSim$ID)
+imgSim$ID <- as.integer(imgSim$ID) #xxx
 
+# Merging the image similarity data and the logfiles into one big data frame
 dfm <- merge(logfiles, imgSim, by = c("ID", "Stimulus"))
 
 table(dfm$ID) #I can see that the rows that didn't have a match have been omitted, which is good.
@@ -50,6 +46,7 @@ class(dfm$ID)
 dfm$ID <- as.factor(dfm$ID)
 dfm$Orientation <- as.factor(dfm$Orientation)
 
+# Removing unnecessary columns
 dfm$X1 <- NULL
 dfm$Screenshot_name <- NULL
 dfm$TimeStamp.y <- NULL
@@ -61,35 +58,50 @@ dfm <- dfm[dfm$copy != "stimulus_o1_b1_c2_n3_034_2021_Nov_09_1330" &
                    dfm$copy != "stimulus_o1_b3_c1_n2_020_2021_Nov_01_0834" &
                    dfm$copy != "stimulus_o1_b3_c3_n1_034_2021_Nov_09_1331", ] 
 
-#######################################################
-
+# Changing the class of the compositional levels to ordered
 dfm$Complexity <- ordered(dfm$Complexity)
 dfm$Noise <- ordered(dfm$Noise)
 dfm$BlankSpace <- ordered(dfm$BlankSpace)
 
-# Transform MSE so that it is on a 0-1 scale - xxx should I?
+# Transform MSE so that it is on a 0-1 scale
 dfm$MSE_1 = dfm$MSE - min(dfm$MSE)
 dfm$MSE_1 = dfm$MSE_1 / max(dfm$MSE)
 
+```
 
-
+```{r small demographic analyses}
 mean(table(dfm$Stimulus))
 min(table(dfm$Stimulus))# Each stimulus appears an average of 15 times, and no Stimulus is showed less than 11 times. This is backing for using Stimulus as random intercept to account for repeated measures.
+
+# Mean age of the participants:
+mean(dfm$Age) #27.37 years old
+
+# Number of males and females in the study:
+table(dfm$Gender)
+
+# xxx nmales and nfemales?
 ```
+
+
 
 ## Run analyses
 
-Outcome variable options:
- - pure MSE
- - transformed
- - standardized
-Random effects options:
- - With / without orientation (xxx orientation as a fixed effect?)
-predictor variable options:
- - Ordered
- - Numeric (as in the 2020 study)
+Outcome variable:
+ - Scales MSE
 
-```{r}
+Predictor variables:
+ - Complexity
+ - Noise
+ - Blank space
+
+Random effects options:
+ - Complexity, noise, blank space (slope)
+ - ID (intercept)
+ - Stimulus (intercept)
+
+
+# 1. Numeric vs ordered models. Transformed MSE (option 1)
+```{r ordered - complexity}
 CHAINS = 2
 ITER = 4000
 CONTROLS = list(
@@ -97,38 +109,12 @@ CONTROLS = list(
   adapt_delta=0.999
   )
 
-f1 <- bf(MSE ~ 1 + Complexity)
-
-#get_prior(m1, dfm) #What am I supposed to make of this??xxx
-
-#prior <- c(
-#  prior(normal(0,.3), class = Intercept), #xxx help
-#  prior(normal(0,.1), class = b),
-#  prior(normal(0,.05), class = sd)
-#)
-
-#m1_prior <- brm(f1,
-#             data = dfm,
-#             family = gaussian,
-#             prior = prior,
-#             sample_prior = "only",
-#                   chains=CHAINS,cores=CHAINS,
-#                   iter=ITER,
-#                   control = CONTROLS
-#             )
-```
-
-
-
-# 1. Numeric vs ordered models. Transformed MSE (option 1)
-```{r ordered - complexity}
-#!!! is the orientation error due to the crop from rectangular to quadratic? Maybe just ignore it? bring it up in the discussion briefly. beyond the scope of this study. Interaction model could be made and compared to the pure complexity model.
 m_c_f2.1 <- bf(MSE_1 ~ 1 + Complexity + (1 + Complexity | ID) + (1 | Stimulus))
 
 get_prior(m_c_f2.1, dfm)
 
 m_c_prior1 <- c(
-  prior(normal(0,.3), class = Intercept),   #xxx are these priors wrong? because in the pp_check it seems that the samples are centered around 0, but the dark blue line is not..?
+  prior(normal(0,.3), class = Intercept),
   prior(normal(0,.1), class = b),
   prior(normal(0,.05), class = sd),
   prior(lkj(5), class = cor)
@@ -147,9 +133,8 @@ m_c_m2.1_prior <- brm(m_c_f2.1,
              )
 
 
-
 # prior predictive check
-pp_check(m_c_m2.1_prior, nsamples=30) #the dark blue line has a very high peak compares to the samples. xxx
+pp_check(m_c_m2.1_prior, nsamples=30)
 y_pred_c_m2.1 <- posterior_linpred(m_c_m2.1_prior)
 dens(inv_logit(y_pred_c_m2.1))
 
@@ -181,6 +166,23 @@ aggregate(dfm$MSE, list(dfm$Complexity), FUN=mean)
 ```{r Noise models}
 m_n_f2.1 <- bf(MSE_1 ~ 1 + Noise + (1 + Noise | ID) + (1 | Stimulus)) 
 
+#Prior model
+m_n_m2.1_prior <- brm(m_n_f2.1,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_n_m2.1_prior"
+             )
+
+# prior predictive check
+pp_check(m_n_m2.1_prior, nsamples=30)
+y_pred_n_m2.1 <- posterior_linpred(m_n_m2.1_prior)
+dens(inv_logit(y_pred_n_m2.1))
+
 # model
 m_n_m2.1 <- brm(m_n_f2.1,
              data = dfm,
@@ -199,8 +201,11 @@ print(hypothesis(m_n_m2.1, "Noise.L > 0", class = "b"))
 print(hypothesis(m_n_m2.1, "Noise.Q > 0", class = "b"))
 plot(hypothesis(m_n_m2.1, "Noise.L > 0", class = "b"))
 plot(hypothesis(m_n_m2.1, "Noise.Q > 0", class = "b"))
-
+#####
 print(hypothesis(m_n_m2.1, "Noise.L < 0", class = "b"))
+print(hypothesis(m_n_m2.1, "Noise.Q < 0", class = "b"))
+plot(hypothesis(m_n_m2.1, "Noise.L < 0", class = "b"))
+plot(hypothesis(m_n_m2.1, "Noise.Q < 0", class = "b"))
 
 aggregate(dfm$MSE, list(dfm$Noise), FUN=mean) 
 ```
@@ -210,6 +215,23 @@ aggregate(dfm$MSE, list(dfm$Noise), FUN=mean)
 ```{r Blank Space models}
 m_b_f2.1 <- bf(MSE_1 ~ 1 + BlankSpace + (1 + BlankSpace | ID) + (1 | Stimulus))
 
+#Prior model
+m_b_m2.1_prior <- brm(m_b_f2.1,
+             data = dfm,
+             family = gaussian,
+             prior = m_c_prior1,
+             sample_prior = "only",
+                   chains=CHAINS,cores=CHAINS,
+                   iter=ITER,
+                   control = CONTROLS,
+             file = "models/memorability/m_b_m2.1_prior"
+             )
+
+
+# prior predictive check
+pp_check(m_b_m2.1_prior, nsamples=30)
+y_pred_b_m2.1 <- posterior_linpred(m_b_m2.1_prior)
+dens(inv_logit(y_pred_b_m2.1))
 
 # model
 m_b_m2.1 <- brm(m_b_f2.1,
@@ -248,61 +270,7 @@ aggregate(dfm$MSE, list(dfm$BlankSpace), FUN=mean)
 
 ## Plots
 
-```{r}
-## Plot for the main manuscript
-
-dfm_agg_c <- subset(dfm) %>% group_by(ID, Complexity) %>% dplyr::summarize(
-  meanError = mean(MSE,na.rm=T),
-  )
-
-dfm_agg_c$ID = as.factor(dfm_agg_c$ID)
-
-Exp3_MainPlot <- ggplot(dfm_agg_c, aes(Complexity, meanError)) + 
-  geom_line(aes(group = ID, color = ID), alpha = 0.3) +
-  geom_point(aes(group = ID, color = ID), alpha = 0.3) +
-  geom_smooth(method = lm) +  #where is the smooth? xxx
-  theme_classic() +
-  ylab("Average error in reproducing the stimulus") +
-  xlab("Complexity") +
-  scale_color_discrete(guide = FALSE) +
-  #scale_x_continuous(breaks = c(1, 2, 3), labels = c("Low", "Medium", "High")) +
-  NULL
-Exp3_MainPlot
-#ggsave("Exp3_MainPlot.svg", plot = Exp3_MainPlot)
-
-
-
-
-
-# Plot for the supplemtary materials
-ggplot(d, aes(PeriodL,MSE)) + 
-  geom_beeswarm(aes(color=Site),alpha=0.5) + 
-  theme_classic() + 
-  geom_smooth(method=lm, alpha=0.8, color="gray50", fill="gray") +
-  xlab("Period") +
-  ylab("Normalized error in reproduction")+
-  scale_x_continuous(breaks = c(-1,0,1),labels=c("Early","Intermediate","Late")) +
-  NULL
-
-ggsave("Plots/Exp3_MseDataPlot.svg",width = 10, height = 6)
-
-ggplot(d, aes(PeriodL,MSE,color=Site)) + 
-  geom_beeswarm(alpha=0.5) + 
-  theme_classic() + 
-  geom_smooth(method=lm, alpha=0.8) +
-  xlab("Time") +
-  ylab("Error in reproduction (scale 0-1)")
-
-ggsave("Exp3_MseSiteDataPlot.svg",width = 23, height = 18)
-
-```
-
-
-
-
-
-
-```{r Kristians plots}
+```{r Orientation effect check plots}
 
 ggplot(dfm, aes(Complexity, MSE, color = Orientation)) + 
   geom_point() +
@@ -319,7 +287,7 @@ ggplot(dfm, aes(BlankSpace, MSE, color = Orientation)) +
 
 
 
-```{r plots lærke}
+```{r Main plots}
 class(dfm$MSE)
 
 dfm$Complexity_num <- as.numeric(dfm$Complexity)
@@ -410,74 +378,5 @@ Exp3_MainPlot_c +
   Exp3_MainPlot_b
 
 ```
-
-
-
-
-
-
-```{r}
-class(dfm$Orientation)
-m_c_f3 <- bf(MSE_1 ~ 1 + Complexity:Orientation + (1 + Complexity | ID) + (1 | Stimulus))
-
-get_prior(m_c_f3, dfm)
-
-m_c_prior3 <- c(
-  prior(normal(0,.3), class = Intercept),   #xxx are these priors wrong? because in the pp_check it seems that the samples are centered around 0, but the dark blue line is not..?
-  prior(normal(0,.1), class = b),
-  prior(normal(0,.05), class = sd),
-  prior(lkj(5), class = cor)
-)
-
-#Prior model
-m_c_m3_prior <- brm(m_c_f3,
-             data = dfm,
-             family = gaussian,
-             prior = m_c_prior3,
-             sample_prior = "only",
-                   chains=CHAINS,cores=CHAINS,
-                   iter=ITER,
-                   control = CONTROLS,
-             file = "models/memorability/m_c_m3_prior"
-             )
-
-
-
-# prior predictive check
-pp_check(m_c_m3_prior, nsamples=30)
-y_pred_c_m3 <- posterior_linpred(m_c_m3_prior)
-dens(inv_logit(y_pred_c_m3))
-
-# Real model
-m_c_m3 <- brm(m_c_f3,
-             data = dfm,
-             family = gaussian,
-             prior = m_c_prior3,
-             sample_prior = TRUE,
-                   chains = CHAINS,cores=CHAINS,
-                   iter = ITER,
-                   control = CONTROLS,
-             file = "models/memorability/m_c_m3"
-             )
-
-print(summary(m_c_m3))
-print(marginal_effects(m_c_m3))
-
-print(hypothesis(m_c_m3, "Complexity:Orientation.L > 0", class = "bms"))
-
-
-print(hypothesis(m_c_m3, "Complexity.Q > 0", class = "b"))
-plot(hypothesis(m_c_m3, "Complexity.L > 0", class = "b"))
-plot(hypothesis(m_c_m3, "Complexity.Q > 0", class = "b"))
-
-aggregate(dfm$MSE, list(dfm$Complexity), FUN=mean) 
-```
-
-
-```
-
-
-
-
 
 
